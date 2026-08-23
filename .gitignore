@@ -1,0 +1,7 @@
+node_modules/
+lib/
+.build/
+*.log
+
+# 开发者 / Agent 维护文档，不进开源仓库
+agent.md

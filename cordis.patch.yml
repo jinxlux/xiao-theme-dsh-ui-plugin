@@ -1,0 +1,5 @@
+# xiao-ui-theme-ts bundle patch: 插入魈主题插件行（TS 构建版，与 xiao-ui-theme 功能一致）。
+# 作为 dsh.bundle 的一部分，安装后随 profile 层栈自动应用。
+- insert:
+    - id: xiao-theme-ts
+      name: 'xiao-ui-theme-ts'

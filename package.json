@@ -1,0 +1,54 @@
+{
+  "name": "xiao-ui-theme-ts",
+  "version": "0.5.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "魈主题 TS 版：青玉配色 + 吉祥物 + 魈式语气（中/英模板 + 自定义提示词）+ 磨砂背景（dsh bundle 插件，pnpm 管理，TypeScript 构建；与 xiao-ui-theme 功能一致）",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "resource",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('lib',{recursive:true,force:true});fs.rmSync('.build',{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.build-host.json && tsc -p tsconfig.build-client.json && node scripts/wrap-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && node scripts/check-dsh.mjs",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('lib',{recursive:true,force:true});fs.rmSync('.build',{recursive:true,force:true})\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.1",
+    "js-yaml": "^4.1.0",
+    "react": "^18.2.0",
+    "typescript": "^5.6.0"
+  }
+}
