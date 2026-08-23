@@ -8,6 +8,11 @@
 把 DeepSeek Harness 的 Web 界面换上一套「魈」主题视觉，并在会话里可选地注入「魈式语气」，
 让界面与助手口吻都带上魈的味道（仅语气风格，不改变回答内容）。
 
+## 示例
+
+<img width="2515" height="1288" alt="Screenshot 2026-08-23 181933" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+
+
 ## 功能
 
 - **青玉配色**：浅色 / 深色两套青玉色板，设置页可一键关闭。
