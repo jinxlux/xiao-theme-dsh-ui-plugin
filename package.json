@@ -42,7 +42,8 @@
     "build": "node -e \"const fs=require('node:fs');fs.rmSync('lib',{recursive:true,force:true});fs.rmSync('.build',{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.build-host.json && tsc -p tsconfig.build-client.json && node scripts/wrap-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit && node scripts/check-dsh.mjs",
-    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('lib',{recursive:true,force:true});fs.rmSync('.build',{recursive:true,force:true})\""
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('lib',{recursive:true,force:true});fs.rmSync('.build',{recursive:true,force:true})\"",
+    "prepare": "tsc"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
