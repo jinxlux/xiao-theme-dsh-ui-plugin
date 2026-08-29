@@ -1,0 +1,101 @@
+> **语言 / Language：** [English](../README.md) · **简体中文**（当前）
+
+# xiao-ui-theme-ts
+
+DeepSeek Harness 的**可自定义主题插件**（默认带一套「魈」青玉风）—— 给 DeepSeek Harness 的
+Web 界面做主题：配色、吉祥物徽章、磨砂背景、注入语气都能自己调。默认是一套魈的青玉/翠青风格，
+但主色、徽章文字、语气、背景透明度等都可配置，改出来就是你的专属主题。
+
+## 这是什么
+
+把 DeepSeek Harness 的 Web 界面换上一套可高度自定义的主题视觉。**默认是魈的青玉风**（青玉配色 +
+吉祥物徽章 + 魈式语气 + 磨砂背景），但每一样都能改：主色、徽章上的文字、语气开关/语言/内容、
+背景图与透明度。也支持在会话里可选注入「魈式语气」——想让助手带魈的口吻就开着，不带就关掉，
+且仅改变语气风格，绝不改变回答内容。
+
+## 示例
+
+<img width="2515" height="1288" alt="Screenshot 2026-08-23 181933" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+
+## 功能
+
+- **可自定义配色（默认青玉/翠青）**：浅色 / 深色两套青玉色板，主色先用圆形色盘自定义，设置页可一键关闭。
+- **吉祥物徽章**：可拖动、可收起的小徽章（底部右侧），标题 / 副标可改成任意文字。
+- **魈式语气**：向系统提示注入一段魈式语气说明（可开关），语言可选中文 / 英文模板，也可填自定义提示词。
+- **磨砂背景**：可配置背景图（支持相对插件目录或本地绝对路径，也可直接上传），并调节模糊强度与界面的不透明度。
+- **界面与侧栏透明控制**：界面不透明度（0.3–0.9）控制主内容区；侧栏不透明度（0–1）单独控制左右侧栏，可拉到 100% 完全不透明，且无论怎么调背景图都始终透出一部分。
+- **主题颜色**：默认魈的青玉绿，也可用圆形色盘任意自定义主色；整套青玉色板（面板底色、边框、品牌色、侧栏、背景渐变）会随主色协调变化，设置后持久保存。
+- **设置页**：总开关、主题颜色、注入语气、模板语言、自定义提示词、头像路径、吉祥物标题/副标、磨砂背景（开关/路径/上传/模糊/透明度）、界面与侧栏不透明度。
+
+## 环境要求
+
+- DeepSeek Harness（`dsh` 可用）
+- Node.js（建议 ≥ 18）
+- [pnpm](https://pnpm.io/)
+
+## 在线安装（在线快速安装）
+
+1. 确保安装 dsh 命令
+2. 执行以下
+```bash
+dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
+```
+
+## 克隆源代码后安装（从 git clone 开始）
+
+```bash
+git clone <copied-repo-url>
+cd xiao-ui-theme-ts
+
+pnpm install       # 安装构建所需依赖
+pnpm run build     # 生成 lib/（ESM Host + ModuleLoader Client + 声明文件）
+pnpm run check     # 可选：校验产物是否符合 DSH 插件契约
+```
+
+然后把它作为 bundle 挂到 DSH profile：
+
+```bash
+# 相对路径（在仓库同级目录执行）
+dsh plugin --profile web add "./xiao-ui-theme-ts"
+# 或绝对路径
+dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
+```
+
+> `dsh plugin add` 会把包装进 profile，并因其 `dsh.bundle` 声明**自动接入 bundle 层栈**，无需手动改配置。
+> 刷新 / 重启 DSH Web 后主题生效。
+
+## 使用与配置
+
+- 打开 DSH Web → **设置 → 魈主题** 页：总开关、主题颜色、注入语气、模板语言、自定义提示词、头像路径、
+  吉祥物标题/副标、磨砂背景（开关 / 路径 / 上传 / 模糊 / 透明度）、界面不透明度、侧栏不透明度。
+- **主题颜色**：点圆形色盘自定义主色（默认魈的青玉绿 `#2E8B72`）；面板底色、边框、品牌色、侧栏与背景渐变
+  都会随主色协调变化。语义状态色（错误 / 警告 / 成功）保持固定，不随主色。
+- **吉祥物文字**：徽章标题（默认「靖妖傩舞」）与副标（默认「别挡路」）可改成任意文字，留空标题会回落默认。
+- **界面不透明度**：控制聊天主内容区的底色，范围 0.3–0.9，上限留 10% 让背景恒透出。
+- **侧栏不透明度**：单独控制左右侧栏，范围 0–1，可拉到 100% 完全不透明；左侧为 DSH 自带的侧栏，
+  右侧同时作用于第三方 better-sidebar 插件（`data-dsh-panel` / `data-dsh-pane`）的面板，没装该插件时自动忽略。
+- 改动**即时生效**，无需重启 DSH。
+- 设置保存在 `~/.dsh/xiao-theme.json`；上传的背景图保存在 `~/.dsh/xiao-theme-uploads/`（用户级，不随仓库走）。
+
+## 注意事项
+
+- **先构建再挂载**：`lib/` 是构建产物、不入库。clone 后务必先执行 `pnpm install && pnpm run build`，
+  再 `dsh plugin add`；直接 add 未构建的目录会因缺少 `lib/` 而加载失败。
+- 默认头像 / 背景使用**包内相对路径**（`resource/avatar.png`、`resource/bg.svg`），跨机器可读；
+  构建后请保持 `resource/` 与 `lib/` 同层（当前结构成立）。
+- 魈式语气提示词依赖 DSH 的 `systemPrompt` 组装。若所用 agent 预设会把提示**过滤成只剩 persona**，
+  或使用了 **complete persona**，该语气在对应会话可能不出现（这是预设行为，不是插件故障）。
+- 「侧栏不透明度」通过 DSH 布局的 `sidebarCol / detailsCol` 列，以及第三方 better-sidebar 的
+  `data-dsh-panel / data-dsh-pane` 属性生效；未安装 better-sidebar 时右侧规则自动失效，不影响主界面。
+- 本插件**不读取环境变量**做配置；设置只来自 `~/.dsh/xiao-theme.json` 与编译期默认值。
+
+## 版权与免责声明
+
+- **代码**：本仓库源码以 **MIT 许可证**开源（见 `LICENSE`），可依法学习、修改与分发。
+- **图片**：`resource/`（bg.svg、avatar.png，及用户上传的背景图）来自**网络公开来源**，仅作本主题的
+  演示 / 自定义用途。
+- **人物形象 / 设定**：魈（Xiao）、《原神》（Genshin Impact）的角色形象、名称、相关设定与美术素材的
+  **版权归米哈游（miHoYo）所有**。MIT 许可证**仅覆盖本仓库代码**，**不涉及**米哈游拥有的角色形象 / 设定 /
+  原创美术；含关联素材（`resource/` 及主题展示）**禁止私自商用或挪作他用**。如需商用或再分发，请先取得
+  米哈游授权许可；移除或替换 `resource/` 中的相关素材即可避开该版权约束。详见 `LICENSE` 中的
+  “Character Image & Setting Intellectual Property Notice”。
