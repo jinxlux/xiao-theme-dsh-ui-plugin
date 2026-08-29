@@ -29,14 +29,20 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   backgroundEnabled: true,
   backgroundImagePath: 'resource/avatar.png',
   backgroundBlur: 22,
-  backgroundOpacity: 0.5,
-  backgroundDarkOpacity: 0.5,
+  panelOpacity: 0.5,
+  sidebarOpacity: 0.85,
+  // 主题主色：默认魈的青玉绿。
+  themeColor: '#2E8B72',
+  mascotTitle: '靖妖傩舞',
+  mascotSubtitle: '别挡路',
 };
 const HOST_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
-  backgroundOpacity: { min: 0.3, max: 1 },
-  backgroundDarkOpacity: { min: 0.3, max: 1 },
+  panelOpacity: { min: 0.3, max: 0.9 },
+  sidebarOpacity: { min: 0, max: 1 },
 } as const;
+/** hex 主色合法性校验：#rgb / #rrggbb。 */
+const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 const MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png',
@@ -88,18 +94,40 @@ async function readConfig(): Promise<XiaoConfig> {
       HOST_RANGES.backgroundBlur.max,
       HOST_DEFAULT_CONFIG.backgroundBlur,
     ),
-    backgroundOpacity: clamp(
-      parsed.backgroundOpacity,
-      HOST_RANGES.backgroundOpacity.min,
-      HOST_RANGES.backgroundOpacity.max,
-      HOST_DEFAULT_CONFIG.backgroundOpacity,
+    // panelOpacity：新字段优先；旧配置迁移（backgroundOpacity/backgroundDarkOpacity -> 取非 0.5 的那个，
+    // 都没有或同为 0.5 则回默认）。封顶 0.9，保证背景图恒可见。
+    panelOpacity: clamp(
+      typeof parsed.panelOpacity === 'number'
+        ? parsed.panelOpacity
+        : typeof parsed.backgroundOpacity === 'number' && parsed.backgroundOpacity !== 0.5
+          ? parsed.backgroundOpacity
+          : typeof parsed.backgroundDarkOpacity === 'number' && parsed.backgroundDarkOpacity !== 0.5
+            ? parsed.backgroundDarkOpacity
+            : HOST_DEFAULT_CONFIG.panelOpacity,
+      HOST_RANGES.panelOpacity.min,
+      HOST_RANGES.panelOpacity.max,
+      HOST_DEFAULT_CONFIG.panelOpacity,
     ),
-    backgroundDarkOpacity: clamp(
-      parsed.backgroundDarkOpacity,
-      HOST_RANGES.backgroundDarkOpacity.min,
-      HOST_RANGES.backgroundDarkOpacity.max,
-      HOST_DEFAULT_CONFIG.backgroundDarkOpacity,
+    sidebarOpacity: clamp(
+      typeof parsed.sidebarOpacity === 'number'
+        ? parsed.sidebarOpacity
+        : HOST_DEFAULT_CONFIG.sidebarOpacity,
+      HOST_RANGES.sidebarOpacity.min,
+      HOST_RANGES.sidebarOpacity.max,
+      HOST_DEFAULT_CONFIG.sidebarOpacity,
     ),
+    themeColor:
+      typeof parsed.themeColor === 'string' && HEX_COLOR_RE.test(parsed.themeColor.trim())
+        ? parsed.themeColor.trim()
+        : HOST_DEFAULT_CONFIG.themeColor,
+    mascotTitle:
+      typeof parsed.mascotTitle === 'string' && parsed.mascotTitle.trim().length > 0
+        ? parsed.mascotTitle
+        : HOST_DEFAULT_CONFIG.mascotTitle,
+    mascotSubtitle:
+      typeof parsed.mascotSubtitle === 'string'
+        ? parsed.mascotSubtitle
+        : HOST_DEFAULT_CONFIG.mascotSubtitle,
   };
 }
 
@@ -220,12 +248,24 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
     backgroundBlur:
       clampNum(body.backgroundBlur, HOST_RANGES.backgroundBlur.min, HOST_RANGES.backgroundBlur.max) ??
       current.backgroundBlur,
-    backgroundOpacity:
-      clampNum(body.backgroundOpacity, HOST_RANGES.backgroundOpacity.min, HOST_RANGES.backgroundOpacity.max) ??
-      current.backgroundOpacity,
-    backgroundDarkOpacity:
-      clampNum(body.backgroundDarkOpacity, HOST_RANGES.backgroundDarkOpacity.min, HOST_RANGES.backgroundDarkOpacity.max) ??
-      current.backgroundDarkOpacity,
+    panelOpacity:
+      clampNum(body.panelOpacity, HOST_RANGES.panelOpacity.min, HOST_RANGES.panelOpacity.max) ??
+      current.panelOpacity,
+    sidebarOpacity:
+      clampNum(body.sidebarOpacity, HOST_RANGES.sidebarOpacity.min, HOST_RANGES.sidebarOpacity.max) ??
+      current.sidebarOpacity,
+    themeColor:
+      typeof body.themeColor === 'string' && HEX_COLOR_RE.test(body.themeColor.trim())
+        ? body.themeColor.trim()
+        : current.themeColor,
+    mascotTitle:
+      typeof body.mascotTitle === 'string' && body.mascotTitle.trim().length > 0
+        ? body.mascotTitle
+        : current.mascotTitle,
+    mascotSubtitle:
+      typeof body.mascotSubtitle === 'string'
+        ? body.mascotSubtitle
+        : current.mascotSubtitle,
   };
 }
 

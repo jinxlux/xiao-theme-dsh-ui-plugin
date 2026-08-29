@@ -23,36 +23,72 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   backgroundEnabled: true,
   backgroundImagePath: 'resource/avatar.png',
   backgroundBlur: 22,
-  backgroundOpacity: 0.5,
-  backgroundDarkOpacity: 0.5,
+  panelOpacity: 0.5,
+  sidebarOpacity: 0.85,
+  themeColor: '#2E8B72',
+  mascotTitle: '靖妖傩舞',
+  mascotSubtitle: '别挡路',
 };
 const CLIENT_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
-  backgroundOpacity: { min: 0.3, max: 1 },
-  backgroundDarkOpacity: { min: 0.3, max: 1 },
+  panelOpacity: { min: 0.3, max: 0.9 },
+  sidebarOpacity: { min: 0, max: 1 },
 } as const;
+const PANEL_OPACITY_MAX = 0.9;
 
 /** 带 webkit 厂商前缀的 style（@types/react 的 DOM lib 未覆盖该属性）。 */
 interface StyleWithWebkit extends CSSStyleDeclaration {
   webkitBackdropFilter?: string;
 }
 
-/** 魈的青玉/翠青配色 token 覆盖（浅色 + 深色）。 */
-const XIAO_TOKENS: Record<string, ThemeTokenValue> = {
-  '--dsw-alias-bg-base': { light: '#F1F6F3', dark: '#0E1816' },
-  '--dsw-alias-bg-layer-1': { light: '#E6EFEA', dark: '#152420' },
-  '--dsw-alias-bg-layer-2': { light: '#DCE8E1', dark: '#1B2E29' },
-  '--dsw-alias-bg-overlay': { light: '#F7FBF9', dark: '#111D1A' },
-  '--dsw-alias-border-l1': { light: '#C5DBD1', dark: '#2C443C' },
-  '--dsw-alias-border-l2': { light: '#A3C4B5', dark: '#3A5A4F' },
-  '--dsw-alias-brand-primary': { light: '#2E8B72', dark: '#5CC4A6' },
-  '--dsw-alias-label-primary': { light: '#17342C', dark: '#DCEBE4' },
-  '--dsw-alias-label-secondary': { light: '#527368', dark: '#9DB8AC' },
-  '--dsw-alias-state-error-primary': { light: '#B4442F', dark: '#D9694F' },
-  '--dsw-alias-state-success-primary': { light: '#2F7D5C', dark: '#58B08C' },
-  '--dsw-alias-state-warn-primary': { light: '#B0872E', dark: '#D4AB4F' },
-  '--dsw-specific-sidebar-fill': { light: '#E9F0EB', dark: '#0F1917' },
-};
+/** 默认主题主色：魈的青玉绿。 */
+const DEFAULT_THEME_COLOR = '#2E8B72';
+
+/**
+ * 由主色派生整套青玉系配色 token（浅色 + 深色）。
+ * 语义功能色（state-error/warn/success）保持固定；青玉相关的 bg/border/brand/label/sidebar 跟随主色。
+ */
+function buildPalette(hex: string): Record<string, ThemeTokenValue> {
+  const base = parseHex(hex) || parseHex(DEFAULT_THEME_COLOR)!;
+  const [h, s, l] = rgbToHsl(base[0], base[1], base[2]);
+  const tone = (lightSat: number, lightL: number, darkSat: number, darkL: number): [string, string] => {
+    // 返回 [lightHex, darkHex]
+    const li = hslToRgb(h, Math.max(8, Math.min(90, lightSat)), lightL);
+    const dk = hslToRgb(h, Math.max(8, Math.min(80, darkSat)), darkL);
+    return [toHex(li[0], li[1], li[2]), toHex(dk[0], dk[1], dk[2])];
+  };
+  const bgBase = tone(s * 0.12, 95, s * 0.4, 7);
+  const bgLayer1 = tone(s * 0.16, 90, s * 0.5, 12);
+  const bgLayer2 = tone(s * 0.2, 84, s * 0.55, 16);
+  const bgOverlay = tone(s * 0.1, 97, s * 0.4, 9);
+  const border1 = tone(s * 0.22, 78, s * 0.5, 26);
+  const border2 = tone(s * 0.28, 70, s * 0.55, 34);
+  const brandDark = hslToRgb(h, Math.min(100, Math.max(40, s * 0.85)), Math.max(64, l * 1.5));
+  const brand: [string, string] = [toHex(base[0], base[1], base[2]), toHex(brandDark[0], brandDark[1], brandDark[2])];
+  const labelPri = tone(s * 0.4, 24, s * 0.18, 92);
+  const labelSec = tone(s * 0.3, 42, s * 0.2, 72);
+  const sidebar = tone(s * 0.14, 92, s * 0.45, 8);
+  return {
+    '--dsw-alias-bg-base': { light: bgBase[0], dark: bgBase[1] },
+    '--dsw-alias-bg-layer-1': { light: bgLayer1[0], dark: bgLayer1[1] },
+    '--dsw-alias-bg-layer-2': { light: bgLayer2[0], dark: bgLayer2[1] },
+    '--dsw-alias-bg-overlay': { light: bgOverlay[0], dark: bgOverlay[1] },
+    '--dsw-alias-border-l1': { light: border1[0], dark: border1[1] },
+    '--dsw-alias-border-l2': { light: border2[0], dark: border2[1] },
+    '--dsw-alias-brand-primary': { light: brand[0], dark: brand[1] },
+    '--dsw-alias-label-primary': { light: labelPri[0], dark: labelPri[1] },
+    '--dsw-alias-label-secondary': { light: labelSec[0], dark: labelSec[1] },
+    '--dsw-alias-state-error-primary': { light: '#B4442F', dark: '#D9694F' },
+    '--dsw-alias-state-success-primary': { light: '#2F7D5C', dark: '#58B08C' },
+    '--dsw-alias-state-warn-primary': { light: '#B0872E', dark: '#D4AB4F' },
+    '--dsw-specific-sidebar-fill': { light: sidebar[0], dark: sidebar[1] },
+  };
+}
+
+/** 当前主色对应的青玉系配色 token（默认魈青玉绿，主色变化时由 buildTokens 重建）。 */
+function xiaoTokens(hex: string): Record<string, ThemeTokenValue> {
+  return buildPalette(hex);
+}
 
 /** 极小可订阅 store：配置 + 订阅通知。 */
 interface ConfigStore {
@@ -137,41 +173,60 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<boolean
   return false;
 }
 
-/** 根据配置构建主题 token 层：背景开启时把面板底色换成半透明，透出磨砂背景。 */
+/** 根据配置构建主题 token 层：背景开启时把面板底色换成半透明（浅色/深色统一受 panelOpacity 控制）。 */
 function buildTokens(cfg: XiaoConfig): Record<string, ThemeTokenValue> {
-  const tokens: Record<string, ThemeTokenValue> = { ...XIAO_TOKENS };
+  const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
+  const tokens: Record<string, ThemeTokenValue> = xiaoTokens(themeColor);
   if (cfg.backgroundEnabled !== false) {
-    const light = clamp01(typeof cfg.backgroundOpacity === 'number' ? cfg.backgroundOpacity : 0.5);
-    const dark = clamp01(typeof cfg.backgroundDarkOpacity === 'number' ? cfg.backgroundDarkOpacity : 0.5);
-    tokens['--dsw-alias-bg-base'] = { light: rgba(241, 246, 243, light), dark: rgba(14, 24, 22, dark) };
+    // panelOpacity 作用于界面底色；封顶 0.9，保证背景图恒有 ≥10% 透出（不再因拉满而糊死背景）。
+    const p = clamp01(typeof cfg.panelOpacity === 'number' ? cfg.panelOpacity : 0.5);
+    const light = Math.min(p, PANEL_OPACITY_MAX);
+    const dark = Math.min(p, PANEL_OPACITY_MAX);
+    // 半透明底色的浅深 RGB 随主题主色派生（不再是固定青玉 RGB）。
+    const surf = deriveSurfaces(themeColor);
+    const [lr, lg, lb] = surf.light;
+    const [dr, dg, db] = surf.dark;
+    tokens['--dsw-alias-bg-base'] = { light: rgba(lr, lg, lb, light), dark: rgba(dr, dg, db, dark) };
     tokens['--dsw-alias-bg-layer-1'] = {
-      light: rgba(241, 246, 243, Math.max(light - 0.06, 0.3)),
-      dark: rgba(14, 24, 22, Math.max(dark - 0.06, 0.3)),
+      light: rgba(lr, lg, lb, Math.max(light - 0.06, 0.25)),
+      dark: rgba(dr, dg, db, Math.max(dark - 0.06, 0.25)),
     };
     tokens['--dsw-alias-bg-layer-2'] = {
-      light: rgba(241, 246, 243, Math.max(light - 0.1, 0.25)),
-      dark: rgba(14, 24, 22, Math.max(dark - 0.1, 0.25)),
+      light: rgba(lr, lg, lb, Math.max(light - 0.1, 0.2)),
+      dark: rgba(dr, dg, db, Math.max(dark - 0.1, 0.2)),
     };
     tokens['--dsw-alias-bg-overlay'] = {
-      light: rgba(247, 251, 249, Math.min(light + 0.12, 0.97)),
-      dark: rgba(17, 29, 26, Math.min(dark + 0.12, 0.97)),
+      light: rgba(lr, lg, lb, Math.min(light + 0.12, PANEL_OPACITY_MAX)),
+      dark: rgba(dr, dg, db, Math.min(dark + 0.12, PANEL_OPACITY_MAX)),
     };
     tokens['--dsw-specific-sidebar-fill'] = {
-      light: rgba(233, 240, 235, Math.max(light - 0.14, 0.3)),
-      dark: rgba(15, 25, 23, Math.max(dark - 0.14, 0.3)),
+      light: rgba(lr, lg, lb, Math.max(light - 0.14, 0.25)),
+      dark: rgba(dr, dg, db, Math.max(dark - 0.14, 0.25)),
     };
   }
   return tokens;
 }
 
-/** 定位 shell 根框架（frame）：它是 #root 的第一个块级子元素（AppFrame 渲染的 grid 容器）。 */
+/** 定位 shell 根框架（frame）：在带 gridTemplateColumns 的候选里挑子列数最多的那个，再兜底 #root 首子元素。 */
 function findFrameElement(): HTMLElement | null {
+  const candidates = document.querySelectorAll('div[style*="grid-template-columns"]');
+  let best: HTMLElement | null = null;
+  let bestCount = -1;
+  for (const el of Array.from(candidates)) {
+    if (!(el instanceof HTMLElement)) continue;
+    const count = el.children.length;
+    const w = el.getBoundingClientRect().width;
+    if (count > bestCount && w > 0) {
+      bestCount = count;
+      best = el;
+    }
+  }
+  if (best) return best;
   const root = document.getElementById('root');
   if (root && root.firstElementChild && root.firstElementChild.tagName === 'DIV') {
-    return root.firstElementChild as HTMLElement;
+    const w = root.firstElementChild.getBoundingClientRect().width;
+    if (w > 0) return root.firstElementChild as HTMLElement;
   }
-  const grid = document.querySelector('div[style*="grid-template-columns"]');
-  if (grid) return grid as HTMLElement;
   return (document.querySelector('#root > div') as HTMLElement | null) || null;
 }
 
@@ -188,8 +243,13 @@ function syncBackground(cfg: XiaoConfig): void {
     de.classList.remove('xiao-bg-on');
     de.style.removeProperty('--xiao-bg-img');
     de.style.removeProperty('--xiao-bg-blur');
-    de.style.removeProperty('--xiao-bg-ovl-light');
+    de.style.removeProperty('--xiao-bg-ovl');
     de.style.removeProperty('--xiao-bg-ovl-dark');
+    de.style.removeProperty('--xiao-sidebar-ovl');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark');
+    de.style.removeProperty('--xiao-theme-color');
+    de.style.removeProperty('--xiao-grad-a');
+    de.style.removeProperty('--xiao-grad-b');
     if (frame) {
       frame.style.backgroundColor = '';
       frame.style.backgroundImage = '';
@@ -199,17 +259,32 @@ function syncBackground(cfg: XiaoConfig): void {
     return;
   }
   const blur = clampNum(typeof cfg.backgroundBlur === 'number' ? cfg.backgroundBlur : 22, 0, 60, 22);
-  const light = clamp01(typeof cfg.backgroundOpacity === 'number' ? cfg.backgroundOpacity : 0.5);
-  const dark = clamp01(typeof cfg.backgroundDarkOpacity === 'number' ? cfg.backgroundDarkOpacity : 0.5);
+  // 统一的不透明度：浅色/深色共用同一 alpha（封顶 0.9 保证背景图恒可见），仅 RGB 底色随主题区分。
+  const p = clamp01(typeof cfg.panelOpacity === 'number' ? cfg.panelOpacity : 0.5);
+  const ovl = Math.min(p, PANEL_OPACITY_MAX);
+  // 侧栏独立不透明度：允许到 1.0（sidebar 可完全 100% 不透明），与主面板 0.9 封顶解耦。
+  const so = clamp01(typeof cfg.sidebarOpacity === 'number' ? cfg.sidebarOpacity : 0.85);
+  // 面板/侧栏底色的浅深 RGB 随主题主色派生。
+  const surf = deriveSurfaces(typeof cfg.themeColor === 'string' ? cfg.themeColor : DEFAULT_THEME_COLOR);
+  const [lr, lg, lb] = surf.light;
+  const [dr, dg, db] = surf.dark;
+  const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
   de.classList.add('xiao-bg-on');
   de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg")');
   de.style.setProperty('--xiao-bg-blur', blur + 'px');
-  de.style.setProperty('--xiao-bg-ovl-light', rgba(241, 246, 243, light));
-  de.style.setProperty('--xiao-bg-ovl-dark', rgba(14, 24, 22, dark));
+  // 背景渐变随主色：中段 = 主色，两端为同色暗/亮。
+  de.style.setProperty('--xiao-theme-color', themeColor);
+  de.style.setProperty('--xiao-grad-a', shiftLight(themeColor, -44));
+  de.style.setProperty('--xiao-grad-b', shiftLight(themeColor, -30));
+  de.style.setProperty('--xiao-bg-ovl', rgba(lr, lg, lb, ovl));
+  de.style.setProperty('--xiao-bg-ovl-dark', rgba(dr, dg, db, ovl));
+  // 侧栏杆：浅色/深色各一个变量，由 CSS 属性选择器套到 sidebarCol/detailsCol 上。
+  de.style.setProperty('--xiao-sidebar-ovl', rgba(lr, lg, lb, so));
+  de.style.setProperty('--xiao-sidebar-ovl-dark', rgba(dr, dg, db, so));
   // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
   if (frame) {
     const isDark = document.body.hasAttribute('data-ds-dark-theme');
-    frame.style.backgroundColor = isDark ? rgba(14, 24, 22, dark) : rgba(241, 246, 243, light);
+    frame.style.backgroundColor = isDark ? rgba(dr, dg, db, ovl) : rgba(lr, lg, lb, ovl);
     frame.style.backgroundImage = 'none';
     frame.style.backdropFilter = 'blur(' + blur + 'px)';
     (frame.style as StyleWithWebkit).webkitBackdropFilter = 'blur(' + blur + 'px)';
@@ -228,6 +303,94 @@ function rgba(r: number, g: number, b: number, a: number): string {
   return 'rgba(' + r + ',' + g + ',' + b + ',' + a.toFixed(3) + ')';
 }
 
+/** 解析 `#rgb` / `#rrggbb` 为 [r,g,b]。非法输入返回 null。 */
+function parseHex(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex) || /^#?([0-9a-f]{3})$/i.exec(hex);
+  if (!m) return null;
+  let h = m[1]!;
+  if (h.length === 3) h = h[0]! + h[0]! + h[1]! + h[1]! + h[2]! + h[2]!;
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function toHex(r: number, g: number, b: number): string {
+  const c = (v: number): string => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+  return '#' + c(r) + c(g) + c(b);
+}
+
+/** rgb -> [h(0-360), s(0-100), l(0-100)]。 */
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h /= 6;
+  }
+  return [h * 360, s * 100, l * 100];
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const hn = ((h % 360) + 360) % 360 / 360;
+  const sn = Math.max(0, Math.min(1, s / 100));
+  const ln = Math.max(0, Math.min(1, l / 100));
+  if (sn === 0) {
+    const v = Math.round(ln * 255);
+    return [v, v, v];
+  }
+  const hue2rgb = (p: number, q: number, t: number): number => {
+    let tn = t;
+    if (tn < 0) tn += 1;
+    if (tn > 1) tn -= 1;
+    if (tn < 1 / 6) return p + (q - p) * 6 * tn;
+    if (tn < 1 / 2) return q;
+    if (tn < 2 / 3) return p + (q - p) * (2 / 3 - tn) * 6;
+    return p;
+  };
+  const q = ln < 0.5 ? ln * (1 + sn) : ln + sn - ln * sn;
+  const p = 2 * ln - q;
+  return [
+    Math.round(hue2rgb(p, q, hn + 1 / 3) * 255),
+    Math.round(hue2rgb(p, q, hn) * 255),
+    Math.round(hue2rgb(p, q, hn - 1 / 3) * 255),
+  ];
+}
+
+/** 调亮/调暗一个色（delta 为 0-100 的明度偏移）。 */
+function shiftLight(hex: string, delta: number): string {
+  const rgb = parseHex(hex);
+  if (!rgb) return hex;
+  const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  return toHex(...hslToRgb(h, s, Math.max(0, Math.min(100, l + delta))));
+}
+
+/** 调整饱和度（sDelta 为 0-100 偏移）。 */
+function shiftSat(hex: string, sDelta: number): string {
+  const rgb = parseHex(hex);
+  if (!rgb) return hex;
+  const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  return toHex(...hslToRgb(h, Math.max(0, Math.min(100, s + sDelta)), l));
+}
+
+/** 同一主色下，浅色/深色主题各自的 RGB 底（面板、侧栏半透明层用）。 */
+function deriveSurfaces(hex: string): { light: [number, number, number]; dark: [number, number, number] } {
+  const base = parseHex(hex) || parseHex('#2E8B72')!;
+  // 浅色：高亮低饱和的青玉底；深色：极暗的青玉底。
+  const [h, s, l] = rgbToHsl(base[0], base[1], base[2]);
+  const light = hslToRgb(h, Math.max(12, s * 0.22), 95);
+  const dark = hslToRgb(h, Math.min(48, s * 0.55), 8);
+  return { light, dark };
+}
+
 /** 一个可拖拽的指针位置状态。 */
 interface DragState {
   startX: number;
@@ -237,8 +400,8 @@ interface DragState {
   moved: boolean;
 }
 
-/** 吉祥物徽章组件：青玉底金边 + 头像 + 靖妖傩舞。 */
-function XiaoBadge(): React.ReactElement {
+/** 吉祥物徽章组件：青玉底金边 + 头像 + 可配置的标题/副标。 */
+function XiaoBadge({ title, subtitle }: { title: string; subtitle: string }): React.ReactElement {
   const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const [hidden, setHidden] = React.useState(false);
@@ -359,8 +522,8 @@ function XiaoBadge(): React.ReactElement {
       React.createElement(
         'div',
         null,
-        React.createElement('div', { className: 'xiao-title' }, '靖妖傩舞'),
-        React.createElement('div', { className: 'xiao-sub' }, '别挡路'),
+        React.createElement('div', { className: 'xiao-title' }, title),
+        React.createElement('div', { className: 'xiao-sub' }, subtitle),
       ),
       React.createElement(
         'button',
@@ -383,7 +546,10 @@ function XiaoOverlay({ store }: { store: ConfigStore }): React.ReactElement | nu
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
   if (snapshot.enabled === false) return null;
-  return React.createElement(XiaoBadge);
+  return React.createElement(XiaoBadge, {
+    title: snapshot.mascotTitle || CLIENT_DEFAULT_CONFIG.mascotTitle,
+    subtitle: snapshot.mascotSubtitle || CLIENT_DEFAULT_CONFIG.mascotSubtitle,
+  });
 }
 
 /** 滑块行：拖动过程本地预览，松开 / 失焦 / 键盘确认时提交。 */
@@ -439,6 +605,10 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
   const voicePrompt = cfg.voicePrompt || '';
   const bgEnabled = cfg.backgroundEnabled !== false;
   const bgPath = cfg.backgroundImagePath || CLIENT_DEFAULT_CONFIG.backgroundImagePath;
+  const themeColor =
+    typeof cfg.themeColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(cfg.themeColor)
+      ? cfg.themeColor
+      : DEFAULT_THEME_COLOR;
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files && e.target.files[0];
@@ -463,6 +633,19 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
           checked: enabled,
           onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
             void saveConfig(store, { enabled: e.target.checked });
+          },
+        }),
+      ),
+      React.createElement(
+        'div',
+        { className: 'xiao-settings-row' },
+        React.createElement('label', { className: 'xiao-settings-label' }, '主题颜色'),
+        React.createElement('input', {
+          className: 'xiao-settings-color',
+          type: 'color',
+          value: themeColor,
+          onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+            void saveConfig(store, { themeColor: e.target.value });
           },
         }),
       ),
@@ -536,11 +719,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       ),
     ),
 
-    // —— 头像 ——
+    // —— 吉祥物 ——
     React.createElement(
       'div',
       { className: 'xiao-settings-section' },
-      React.createElement('div', { className: 'xiao-settings-title' }, '头像'),
+      React.createElement('div', { className: 'xiao-settings-title' }, '吉祥物'),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
@@ -553,6 +736,34 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
           onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
             const next = e.target.value.trim();
             if (next.length > 0) void saveConfig(store, { avatarPath: next });
+          },
+        }),
+      ),
+      React.createElement(
+        'div',
+        { className: 'xiao-settings-row' },
+        React.createElement('label', { className: 'xiao-settings-label' }, '标题'),
+        React.createElement('input', {
+          className: 'xiao-settings-input',
+          type: 'text',
+          defaultValue: cfg.mascotTitle || CLIENT_DEFAULT_CONFIG.mascotTitle,
+          key: cfg.mascotTitle || 'default-title',
+          onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+            void saveConfig(store, { mascotTitle: e.target.value });
+          },
+        }),
+      ),
+      React.createElement(
+        'div',
+        { className: 'xiao-settings-row' },
+        React.createElement('label', { className: 'xiao-settings-label' }, '副标'),
+        React.createElement('input', {
+          className: 'xiao-settings-input',
+          type: 'text',
+          defaultValue: cfg.mascotSubtitle || CLIENT_DEFAULT_CONFIG.mascotSubtitle,
+          key: cfg.mascotSubtitle || 'default-subtitle',
+          onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+            void saveConfig(store, { mascotSubtitle: e.target.value });
           },
         }),
       ),
@@ -613,25 +824,25 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         },
       }),
       React.createElement(RangeRow, {
-        label: '浅色遮罩',
-        value: clampNum(cfg.backgroundOpacity, CLIENT_RANGES.backgroundOpacity.min, CLIENT_RANGES.backgroundOpacity.max, 0.5),
+        label: '界面不透明度',
+        value: clampNum(cfg.panelOpacity, CLIENT_RANGES.panelOpacity.min, CLIENT_RANGES.panelOpacity.max, 0.5),
         min: 0.3,
-        max: 1,
+        max: 0.9,
         step: 0.01,
         format: (v) => Math.round(v * 100) + '%',
         onCommit: (v) => {
-          if (v !== cfg.backgroundOpacity) void saveConfig(store, { backgroundOpacity: v });
+          if (v !== cfg.panelOpacity) void saveConfig(store, { panelOpacity: v });
         },
       }),
       React.createElement(RangeRow, {
-        label: '深色遮罩',
-        value: clampNum(cfg.backgroundDarkOpacity, CLIENT_RANGES.backgroundDarkOpacity.min, CLIENT_RANGES.backgroundDarkOpacity.max, 0.84),
-        min: 0.3,
+        label: '侧栏不透明度',
+        value: clampNum(cfg.sidebarOpacity, CLIENT_RANGES.sidebarOpacity.min, CLIENT_RANGES.sidebarOpacity.max, 0.85),
+        min: 0,
         max: 1,
         step: 0.01,
         format: (v) => Math.round(v * 100) + '%',
         onCommit: (v) => {
-          if (v !== cfg.backgroundDarkOpacity) void saveConfig(store, { backgroundDarkOpacity: v });
+          if (v !== cfg.sidebarOpacity) void saveConfig(store, { sidebarOpacity: v });
         },
       }),
       React.createElement(
@@ -647,8 +858,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
                 backgroundEnabled: true,
                 backgroundImagePath: 'resource/avatar.png',
                 backgroundBlur: 22,
-                backgroundOpacity: 0.5,
-                backgroundDarkOpacity: 0.5,
+                panelOpacity: 0.5,
+                sidebarOpacity: 0.85,
               }),
           },
           '恢复背景默认',
@@ -666,9 +877,18 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
 
 const XIAO_CSS: string[] = [
   'html.xiao-bg-on,html.xiao-bg-on body{background-color:transparent!important;}',
-  'html.xiao-bg-on body{background-image:var(--xiao-bg-img),linear-gradient(135deg,#1c463a,#2E8B72 55%,#0e1816)!important;background-color:transparent!important;background-attachment:fixed!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important;}',
-  'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl-light)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
+  'html.xiao-bg-on body{background-image:var(--xiao-bg-img),linear-gradient(135deg,var(--xiao-grad-a),var(--xiao-theme-color) 55%,var(--xiao-grad-b))!important;background-color:transparent!important;background-attachment:fixed!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important;}',
+  'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
   'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
+  // 左右侧栏独立底色：用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
+  'html.xiao-bg-on [class$="sidebarCol"],[class$="detailsCol"]{background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [class$="sidebarCol"],body[data-ds-dark-theme] [class$="detailsCol"]{background:var(--xiao-sidebar-ovl-dark)!important;}',
+  // 第三方 better-sidebar 右侧面板：全局 data 属性锚点（不依赖其哈希类名），跟随侧栏不透明度。
+  // 没装该插件时选择器匹配不到，天然无副作用、不会崩。
+  'html.xiao-bg-on [data-dsh-panel]{background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on [data-dsh-panel] [data-dsh-pane]{background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]{background:var(--xiao-sidebar-ovl-dark)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel] [data-dsh-pane]{background:var(--xiao-sidebar-ovl-dark)!important;}',
   '.xiao-mascot{position:fixed;right:18px;bottom:18px;z-index:2147483000;pointer-events:auto;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;}',
   '.xiao-badge{display:flex;align-items:center;gap:10px;padding:8px 12px 8px 10px;border-radius:999px;background:linear-gradient(135deg,var(--dsw-alias-bg-overlay),var(--dsw-alias-bg-layer-1));border:2px solid #C9A96B;box-shadow:0 6px 20px rgba(20,60,50,0.30);white-space:nowrap;}',
   '.xiao-avatar{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #C9A96B;flex:none;}',
@@ -693,6 +913,9 @@ const XIAO_CSS: string[] = [
   '.xiao-settings-range{flex:1;min-width:0;accent-color:var(--dsw-alias-brand-primary);}',
   '.xiao-settings-value{font-size:12px;color:var(--dsw-alias-label-secondary);min-width:44px;text-align:right;flex:none;}',
   '.xiao-settings-file{flex:1;min-width:0;font-size:13px;color:var(--dsw-alias-label-secondary);}',
+  '.xiao-settings-color{width:44px;height:44px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:none;cursor:pointer;flex:none;}',
+  '.xiao-settings-color::-webkit-color-swatch-wrapper{padding:0;}',
+  '.xiao-settings-color::-webkit-color-swatch{border:none;border-radius:50%;}',
   '.xiao-settings-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;}',
   '.xiao-settings-btn:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}',
   '.xiao-settings-hint{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.6;}',
@@ -753,8 +976,13 @@ function apply(ctx: ClientCtx): void {
       de.classList.remove('xiao-bg-on');
       de.style.removeProperty('--xiao-bg-img');
       de.style.removeProperty('--xiao-bg-blur');
-      de.style.removeProperty('--xiao-bg-ovl-light');
+      de.style.removeProperty('--xiao-bg-ovl');
       de.style.removeProperty('--xiao-bg-ovl-dark');
+      de.style.removeProperty('--xiao-sidebar-ovl');
+      de.style.removeProperty('--xiao-sidebar-ovl-dark');
+      de.style.removeProperty('--xiao-theme-color');
+      de.style.removeProperty('--xiao-grad-a');
+      de.style.removeProperty('--xiao-grad-b');
       const frame = findFrameElement();
       if (frame) {
         frame.style.backgroundColor = '';

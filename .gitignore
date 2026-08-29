@@ -5,3 +5,9 @@ lib/
 
 # 开发者 / Agent 维护文档，不进开源仓库
 agent.md
+
+# 本地自动生成
+.pnpm-store/
+
+# release
+xiao-ui-theme-ts-*

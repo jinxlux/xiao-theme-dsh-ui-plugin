@@ -25,8 +25,23 @@ export interface XiaoConfig {
   backgroundImagePath: string;
   /** 磨砂背景模糊强度（px）。 */
   backgroundBlur: number;
-  /** 浅色模式遮罩透明度。 */
-  backgroundOpacity: number;
-  /** 深色模式遮罩透明度。 */
-  backgroundDarkOpacity: number;
+  /**
+   * 界面不透明度（0–1）：作用于 sidebar / 面板 / 内容层的底色，浅色与深色主题统一生效。
+   * 数值越大界面越不透明；为了「背景图始终可见」，最大只允许到 0.9（恒留 ≥10% 背景透出）。
+   */
+  panelOpacity: number;
+  /**
+   * 侧栏不透明度（0–1）：专门统管左右两侧 sidebar 的底色，浅色与深色主题统一生效。
+   * 与 panelOpacity 独立，且允许到 1.0（完全 100% 不透明，不受面板 0.9 封顶限制）。
+   */
+  sidebarOpacity: number;
+  /**
+   * 主题主色（hex，如 #2E8B72）：青玉/翠青整套色板（背景、边框、品牌色、侧栏、背景渐变）都从
+   * 这个主色派生。默认魈的青玉绿；用户可经设置页圆形色盘任意自定义。
+   */
+  themeColor: string;
+  /** 吉祥物徽章标题（默认「靖妖傩舞」）。 */
+  mascotTitle: string;
+  /** 吉祥物徽章副标（默认「别挡路」）。 */
+  mascotSubtitle: string;
 }
