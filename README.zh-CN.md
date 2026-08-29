@@ -1,4 +1,4 @@
-> **语言 / Language：** [English](../README.md) · **简体中文**（当前）
+> **语言 / Language：** [English](../README.md) · **简体中文**（当前） · [日本語](./README.ja.md) · [한국어](./README.ko.md)
 
 # xiao-ui-theme-ts
 
