@@ -36,7 +36,7 @@ Web 界面做主题：配色、吉祥物徽章、磨砂背景、注入语气都�
 1. 确保安装dsh命令
 2. 执行以下
 ```bash
-dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/dsh-ui-plugin-xiao-0.5/xiao-ui-theme-ts-0.5.0.tgz
+dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
 ```
 
 ## 克隆源代码后安装（从 git clone 开始）
