@@ -31,7 +31,11 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 ## Install online (quick)
 
 1. Make sure the `dsh` command is available.
-2. Run:
+2. Install by package name (npm — recommended):
+```bash
+dsh plugin --profile web add xiao-ui-theme-ts
+```
+   Or install directly from a GitHub release tarball:
 ```bash
 dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
 ```
@@ -71,6 +75,11 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 ## Notes
 
+- **Switching from a local install to a remote install**: if you first installed this plugin from a local path (`dsh plugin add ./xiao-ui-theme-ts`, which DSH stores as a `link:` dependency), then later switch to a remote install (package name or tarball), remove the leftover link first — otherwise pnpm may follow it back to your local `node_modules` and fail with a symlink `EPERM` (`@types/node`). Remove it and retry:
+  ```bash
+  dsh plugin --profile web remove xiao-ui-theme-ts
+  dsh plugin --profile web add xiao-ui-theme-ts
+  ```
 - **Build before mounting**: `lib/` is build output, not committed. After clone, run `pnpm install && pnpm run build` first, then `dsh plugin add`; adding an unbuilt directory fails because `lib/` is missing.
 - Default avatar / background use **in-package relative paths** (`resource/avatar.png`, `resource/bg.svg`), readable across machines; keep `resource/` at the same level as `lib/` after building (current layout works).
 - The Xiao-voice prompt depends on DSH's `systemPrompt` assembly. If the agent preset filters the prompt down to only a persona, or uses a **complete persona**, the voice may not appear in that session (that's preset behavior, not a plugin bug).

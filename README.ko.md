@@ -31,7 +31,11 @@ DeepSeek Harness의 웹 인터페이스에 고도로 사용자 지정 가능한 
 ## 온라인 설치 (빠르게)
 
 1. `dsh` 명령이 사용 가능한지 확인합니다.
-2. 다음을 실행합니다:
+2. 패키지 이름으로 설치 (npm, 권장):
+```bash
+dsh plugin --profile web add xiao-ui-theme-ts
+```
+   또는 GitHub 릴리스의 tgz로 직접 설치:
 ```bash
 dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
 ```
@@ -71,6 +75,14 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 ## 주의 사항
 
+- **로컬 설치에서 원격 설치로 전환** : 처음에 로컬 경로로 설치한 경우(`dsh plugin add ./xiao-ui-theme-ts`,
+  DSH는 `link:` 의존성으로 기록) 나중에 패키지 이름 / tgz로 원격 설치로 전환할 때는 남아 있는 link를
+  먼저 제거하세요. 그렇지 않으면 pnpm이 link를 따라 로컬 `node_modules`로 돌아가 심볼릭 링크 `EPERM`
+  (`@types/node`)으로 실패합니다. 먼저 제거한 뒤 다시 시도하세요:
+  ```bash
+  dsh plugin --profile web remove xiao-ui-theme-ts
+  dsh plugin --profile web add xiao-ui-theme-ts
+  ```
 - **마운트 전에 빌드** : `lib/`는 빌드 산출물로 커밋되지 않습니다. 클론 후 `pnpm install && pnpm run build`를 먼저 실행하세요. 빌드되지 않은 디렉터리를 `dsh plugin add`하면 `lib/`가 없어 로딩에 실패합니다.
 - 기본 아바타/배경은 **패키지 내 상대 경로**(`resource/avatar.png`, `resource/bg.svg`)를 사용해 머신 간에 읽을 수 있습니다. 빌드 후 `resource/`를 `lib/`와 같은 레벨로 유지하세요(현재 구성 성립).
 - 소풍 음성 프롬프트는 DSH의 `systemPrompt` 조립에 의존합니다. 사용 중인 agent 프리셋이 프롬프트를 persona만 남기도록 거르는 경우, 또는 **complete persona**를 쓰는 경우 해당 세션에서는 음성이 나타나지 않을 수 있습니다(프리셋 동작이며 플러그인 버그가 아닙니다).

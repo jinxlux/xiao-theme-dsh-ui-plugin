@@ -31,7 +31,11 @@ DeepSeek Harness の Web インターフェイスに、高度にカスタマイ�
 ## オンラインインストール（クイック）
 
 1. `dsh` コマンドが利用可能であることを確認します。
-2. 以下を実行します：
+2. パッケージ名でインストール（npm、推奨）：
+```bash
+dsh plugin --profile web add xiao-ui-theme-ts
+```
+   または GitHub リリースの tgz から直接インストール：
 ```bash
 dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
 ```
@@ -71,6 +75,15 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 ## 注意事項
 
+- **ローカルインストールからリモートへの切り替え**：最初にローカルパスでインストールした場合
+  （`dsh plugin add ./xiao-ui-theme-ts`、DSH は `link:` 依存として記録）、後からパッケージ名 / tgz での
+  リモートインストールに切り替える際は、残っている link を先に削除してください。さもないと pnpm が link を
+  たどってローカルの `node_modules` に戻り、シンボリックリンク `EPERM`（`@types/node`）で失敗します。先に
+  削除してから再試行します：
+  ```bash
+  dsh plugin --profile web remove xiao-ui-theme-ts
+  dsh plugin --profile web add xiao-ui-theme-ts
+  ```
 - **マウント前にビルド**：`lib/` はビルド成果物で、コミットされません。クローン後は `pnpm install && pnpm run build` を先に実行してください。未ビルドのディレクトリを `dsh plugin add` すると `lib/` がなく読み込みに失敗します。
 - 標準のアバター／背景は**パッケージ内の相対パス**（`resource/avatar.png`、`resource/bg.svg`）を使用し、マシンをまたいで読めます。ビルド後は `resource/` を `lib/` と同じ階層に保ってください（現在の構成で成立しています）。
 - 魈風音声のプロンプトは DSH の `systemPrompt` の組み立てに依存します。使用する agent プリセットがプロンプトを persona のみに絞り込む場合、または **complete persona** を使う場合、そのセッションでは音声が現れないことがあります（これはプリセットの動作であり、プラグインの不具合ではありません）。

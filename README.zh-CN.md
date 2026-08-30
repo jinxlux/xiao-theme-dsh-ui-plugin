@@ -36,7 +36,11 @@ Web 界面做主题：配色、吉祥物徽章、磨砂背景、注入语气都�
 ## 在线安装（在线快速安装）
 
 1. 确保安装 dsh 命令
-2. 执行以下
+2. 按包名安装（npm，推荐）：
+```bash
+dsh plugin --profile web add xiao-ui-theme-ts
+```
+   或直接从 GitHub release 安装 tgz：
 ```bash
 dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
 ```
@@ -79,6 +83,13 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 ## 注意事项
 
+- **本地安装切到远程安装**：若一开始是用本地路径装的（`dsh plugin add ./xiao-ui-theme-ts`，DSH 会记成 `link:` 依赖），
+  后来改按包名 / tgz 远程安装，需先清掉残留的 link，否则 pnpm 会顺着 link 回到你本地 `node_modules`，
+  报符号链接 `EPERM`（`@types/node`）。先移除再重试：
+  ```bash
+  dsh plugin --profile web remove xiao-ui-theme-ts
+  dsh plugin --profile web add xiao-ui-theme-ts
+  ```
 - **先构建再挂载**：`lib/` 是构建产物、不入库。clone 后务必先执行 `pnpm install && pnpm run build`，
   再 `dsh plugin add`；直接 add 未构建的目录会因缺少 `lib/` 而加载失败。
 - 默认头像 / 背景使用**包内相对路径**（`resource/avatar.png`、`resource/bg.svg`），跨机器可读；
