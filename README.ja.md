@@ -38,7 +38,7 @@ dsh plugin --profile web add xiao-ui-theme-ts
 ```
    または GitHub リリースの tgz から直接インストール：
 ```bash
-dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/xiao-ui-theme-ts-0.6.0/xiao-ui-theme-ts-0.6.0.tgz
+dsh plugin --profile web add https://github.com/jinxlux/xiao-theme-dsh-ui-plugin/releases/download/dsh-xiao-version-0.7/xiao-ui-theme-ts-0.7.0.tgz
 ```
 
 ## ソースからインストール（クローン）
