@@ -15,7 +15,7 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 ## Features
 
 - **Customizable palette (jade/emerald by default)**: light / dark jade palettes; pick the accent with a color wheel, and toggle the theme off from settings.
-- **Mascot badge**: a draggable, collapsible badge (bottom-right); title and subtitle can be set to any text.
+- **Mascot badge**: a draggable, collapsible badge (bottom-right); title and subtitle can be set to any text, and the avatar image can be replaced by uploading a new one. The avatar also supports animated GIFs — an uploaded GIF plays as an animation with no separate toggle.
 - **Xiao-style voice**: injects a Xiao-voice instruction into the system prompt (toggleable), with Chinese / English templates or your own custom prompt.
 - **Frosted background**: configurable background image (relative plugin path, local absolute path, or direct upload), with adjustable blur and UI transparency. Uploading an **animated GIF** is auto-detected and used as a **live/dynamic background**; static images or single-frame GIFs keep the static frosted treatment.
 - **UI & sidebar transparency control**: UI opacity (0.3–0.9) controls the main content area; sidebar opacity (0–1) independently controls the left/right sidebars, up to 100% fully opaque while always letting part of the background through.
@@ -68,7 +68,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 - Open DSH Web → **Settings → Xiao Theme**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, theme management, frosted background (on / path / upload / blur / opacity; GIF auto-detected as a dynamic background), UI opacity, sidebar opacity.
 - **Accent color**: pick an accent with the color wheel (default jade green `#2E8B72`); the panel surfaces, borders, brand color, sidebars and background gradient all shift in sync. Semantic state colors (error / warning / success) stay fixed and don't follow the accent.
-- **Mascot text**: badge title (default "靖妖傩舞") and subtitle (default "别挡路") can be set to any text; an empty title falls back to the default.
+- **Mascot**: badge title (default "靖妖傩舞") and subtitle (default "别挡路") can be set to any text; an empty title falls back to the default. The avatar image path accepts a plugin-relative path or a local absolute path, and you can upload an image directly to replace the avatar. The avatar also supports animated GIFs — an uploaded GIF plays as an animation with no separate toggle.
 - **UI opacity**: controls the main content area, range 0.3–0.9, capped so at least ~10% of the background stays visible.
 - **Sidebar opacity**: independently controls the left/right sidebars, range 0–1, up to 100% fully opaque; the left is DSH's own sidebar, and the right also targets the third-party better-sidebar plugin (`data-dsh-panel` / `data-dsh-pane`) — ignored automatically if that plugin isn't installed.
 - Changes take effect **immediately**, no DSH restart needed.

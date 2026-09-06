@@ -597,7 +597,9 @@ export function apply(ctx: HostCtx): void {
                   return;
                 }
                 await mkdir(UPLOAD_DIR, { recursive: true });
-                const filePath = join(UPLOAD_DIR, `bg-${Date.now()}${ext}`);
+                // kind 参数区分上传用途：背景图默认前缀 bg-；头像请求带 kind=avatar 用 avatar- 前缀。
+                const kind = queryParam(request, 'kind') === 'avatar' ? 'avatar' : 'bg';
+                const filePath = join(UPLOAD_DIR, `${kind}-${Date.now()}${ext}`);
                 await writeFile(filePath, body);
                 // 自动检测：是否为动态 GIF（多帧动画）。GIF 动图 => dynamic=true；静态图/单帧 GIF => false。
                 const dynamic = isAnimatedGif(body);

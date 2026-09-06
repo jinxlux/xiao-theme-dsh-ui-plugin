@@ -38,6 +38,7 @@ const CLIENT_RANGES = {
 const PANEL_OPACITY_MAX = 0.9;
 
 let bgVersion = 0;
+let avatarVersion = 0;
 
 /** DSH 当前界面语言（<html lang>）：zh* => 中文，否则英文。 */
 function currentLangZh(): boolean {
@@ -69,12 +70,13 @@ const STR: Record<string, { zh: string; en: string }> = {
   enableBg: { zh: '启用磨砂背景', en: 'Enable frosted background' },
   bgPath: { zh: '背景图路径', en: 'Background image path' },
   uploadBg: { zh: '上传背景图', en: 'Upload background image' },
+  uploadAvatar: { zh: '上传头像', en: 'Upload avatar' },
   blurStrength: { zh: '磨砂强度', en: 'Blur strength' },
   uiOpacity: { zh: '界面不透明度', en: 'UI opacity' },
   sidebarOpacity: { zh: '侧栏不透明度', en: 'Sidebar opacity' },
   useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
   useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
-  settingsHint: { zh: '改动即时生效。背景图路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图会自动识别为动态背景；静态图片或单帧 GIF 仍按原静态磨砂背景处理。', en: 'Changes take effect immediately. The background path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF is auto-detected as a dynamic background; static images or single-frame GIFs keep the static frosted treatment.' },
+  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图会自动识别为动态背景；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF is auto-detected as a dynamic background; static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading.' },
   themeManager: { zh: '主题管理', en: 'Theme management' },
   themeManagerHint: { zh: '所有设置修改都会自动保存为当前主题修改。如果想创建新主题，请用「另存为新主题」创建，再在新主题下修改，才不会覆盖现在这个主题的设置。', en: 'All setting changes are automatically saved to the current theme. To create a new theme, use "Save as new theme" first, then edit under that new theme so you don\'t overwrite the current theme\'s settings.' },
   currentTheme: { zh: '当前主题', en: 'Current theme' },
@@ -211,6 +213,7 @@ async function loadConfig(store: ConfigStore): Promise<void> {
 /** 写配置到 Host 半，成功则以 Host 返回值为准更新 store。 */
 async function saveConfig(store: ConfigStore, patch: Partial<XiaoConfig>): Promise<void> {
   const prevPath = store.getSnapshot().backgroundImagePath;
+  const prevAvatar = store.getSnapshot().avatarPath;
   const next = { ...store.getSnapshot(), ...patch };
   // 本地先更新，保证 UI 即时反馈；Host 返回值再校准
   store.set(next);
@@ -224,6 +227,8 @@ async function saveConfig(store: ConfigStore, patch: Partial<XiaoConfig>): Promi
       const saved = (await response.json()) as XiaoConfig;
       // 背景图路径变化：等配置真正写回后 +1 版本号，让背景 URL 变化并重新拉取，避免竞态拿到旧图。
       if (saved.backgroundImagePath !== prevPath) bgVersion++;
+      // 头像路径变化同理：+1 版本号让徽章 <img> 的缓存指纹变化，避免上传后仍显示旧头像。
+      if (saved.avatarPath !== prevAvatar) avatarVersion++;
       store.set(saved);
     }
   } catch (error) {
@@ -267,6 +272,31 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<boolean
     }
   } catch (error) {
     console.error('[xiao-theme] upload failed:', error);
+  }
+  return false;
+}
+
+/** 上传头像图到 Host，成功后把返回的路径写入配置（头像无“动态背景”概念，只取 imagePath）。 */
+async function uploadAvatar(store: ConfigStore, file: File): Promise<boolean> {
+  const match = /\.([a-zA-Z0-9]+)$/.exec(file.name || '');
+  const ext = match ? match[1]!.toLowerCase() : 'png';
+  try {
+    const response = await fetch('/xiao-theme/upload?ext=.' + encodeURIComponent(ext) + '&kind=avatar', {
+      method: 'POST',
+      headers: xiaoLangHeader(),
+      body: file,
+    });
+    if (!response.ok) {
+      console.error('[xiao-theme] avatar upload failed:', response.status);
+      return false;
+    }
+    const data = (await response.json()) as { imagePath?: unknown };
+    if (data && typeof data.imagePath === 'string' && data.imagePath.length > 0) {
+      await saveConfig(store, { avatarPath: data.imagePath });
+      return true;
+    }
+  } catch (error) {
+    console.error('[xiao-theme] avatar upload failed:', error);
   }
   return false;
 }
@@ -582,7 +612,7 @@ interface DragState {
 }
 
 /** 吉祥物徽章组件：青玉底金边 + 头像 + 可配置的标题/副标。 */
-function XiaoBadge({ title, subtitle }: { title: string; subtitle: string }): React.ReactElement {
+function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title: string; subtitle: string }): React.ReactElement {
   const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const [hidden, setHidden] = React.useState(false);
@@ -696,7 +726,7 @@ function XiaoBadge({ title, subtitle }: { title: string; subtitle: string }): Re
       { className: 'xiao-badge' },
       React.createElement('img', {
         className: 'xiao-avatar',
-        src: '/xiao-avatar.png',
+        src: '/xiao-avatar.png?p=' + encodeURIComponent(avatarPath || '') + '&v=' + avatarVersion,
         alt: '魈',
         draggable: 'false',
       }),
@@ -728,6 +758,7 @@ function XiaoOverlay({ store }: { store: ConfigStore }): React.ReactElement | nu
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
   if (snapshot.enabled === false) return null;
   return React.createElement(XiaoBadge, {
+    avatarPath: snapshot.avatarPath || CLIENT_DEFAULT_CONFIG.avatarPath,
     title: snapshot.mascotTitle || CLIENT_DEFAULT_CONFIG.mascotTitle,
     subtitle: snapshot.mascotSubtitle || CLIENT_DEFAULT_CONFIG.mascotSubtitle,
   });
@@ -1079,6 +1110,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     e.target.value = '';
     if (file) void uploadBackground(store, file);
   };
+  const onPickAvatarFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (file) void uploadAvatar(store, file);
+  };
 
   return React.createElement(
     'div',
@@ -1202,6 +1238,17 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             const next = e.target.value.trim();
             if (next.length > 0) void saveConfig(store, { avatarPath: next });
           },
+        }),
+      ),
+      React.createElement(
+        'div',
+        { className: 'xiao-settings-row' },
+        React.createElement('label', { className: 'xiao-settings-label' }, t('uploadAvatar')),
+        React.createElement('input', {
+          className: 'xiao-settings-file',
+          type: 'file',
+          accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml',
+          onChange: onPickAvatarFile,
         }),
       ),
       React.createElement(
