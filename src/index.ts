@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { VoiceLanguage, XiaoConfig } from './config';
+import type { VoiceLanguage, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport } from './config';
 import type { HostCtx, WebRouteHandler } from './host.types';
 
 const CONFIG_PATH = join(homedir(), '.dsh', 'xiao-theme.json');
@@ -45,6 +45,24 @@ const HOST_RANGES = {
 /** hex 主色合法性校验：#rgb / #rrggbb。 */
 const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
+/** 内置默认主题 id / 名称：不可删除，配置即默认设置。 */
+const DEFAULT_THEME_ID = 'default';
+const DEFAULT_THEME_NAME = '魈';
+
+/** 主题持久化条目：一份完整配置 + 元信息。 */
+interface ThemeEntry {
+  name: string;
+  builtin: boolean;
+  /** 已规范化的配置（写回前经 normalizeConfig）。 */
+  config: XiaoConfig;
+}
+
+/** 主题管理持久化形态（~/.dsh/xiao-theme.json）。 */
+interface ThemeStore {
+  activeThemeId: string;
+  themes: Record<string, ThemeEntry>;
+}
+
 const MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -54,18 +72,8 @@ const MIME_BY_EXT: Record<string, string> = {
   '.svg': 'image/svg+xml',
 };
 
-/** 读取配置；文件缺失或损坏时回落默认值（逐字段校验 + 补默认）。 */
-async function readConfig(): Promise<XiaoConfig> {
-  let parsed: Record<string, unknown> = {};
-  try {
-    const text = await readFile(CONFIG_PATH, 'utf8');
-    const value: unknown = JSON.parse(text);
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      parsed = value as Record<string, unknown>;
-    }
-  } catch {
-    parsed = {};
-  }
+/** 把任意配置对象规范化为合法 XiaoConfig（逐字段校验 + 兜底；含旧字段迁移 backgroundOpacity/… -> panelOpacity）。 */
+function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
   const clamp = (value: unknown, min: number, max: number, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value)
       ? Math.min(max, Math.max(min, value))
@@ -133,10 +141,84 @@ async function readConfig(): Promise<XiaoConfig> {
   };
 }
 
-/** 原子写回配置（确保目录存在）。 */
-async function writeConfig(next: XiaoConfig): Promise<void> {
+/** 判断对象是否已是主题管理存储形态。 */
+function isThemeStoreShape(value: unknown): value is ThemeStore {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    typeof o.activeThemeId === 'string' &&
+    o.themes !== null &&
+    typeof o.themes === 'object' &&
+    !Array.isArray(o.themes)
+  );
+}
+
+/** 规整存储：确保 default 主题存在、activeThemeId 指向有效主题、各主题 config 规范化。 */
+function coerceThemeStore(value: ThemeStore): ThemeStore {
+  if (!value.themes[DEFAULT_THEME_ID]) {
+    value.themes[DEFAULT_THEME_ID] = { name: DEFAULT_THEME_NAME, builtin: true, config: { ...HOST_DEFAULT_CONFIG } };
+  }
+  const def = value.themes[DEFAULT_THEME_ID]!;
+  def.builtin = true;
+  if (typeof def.name !== 'string' || def.name.trim().length === 0) def.name = DEFAULT_THEME_NAME;
+  for (const key of Object.keys(value.themes)) {
+    const entry = value.themes[key];
+    if (entry && entry.config && typeof entry.config === 'object') {
+      entry.config = normalizeConfig(entry.config as unknown as Record<string, unknown>);
+    } else {
+      value.themes[key] = {
+        name: key === DEFAULT_THEME_ID ? DEFAULT_THEME_NAME : (entry && entry.name) || key,
+        builtin: key === DEFAULT_THEME_ID,
+        config: { ...HOST_DEFAULT_CONFIG },
+      };
+    }
+  }
+  if (!value.themes[value.activeThemeId]) value.activeThemeId = DEFAULT_THEME_ID;
+  return value;
+}
+
+/** 读取主题存储：新格式直接规整；旧裸 XiaoConfig 自动迁移为默认主题。 */
+async function readThemeStore(): Promise<ThemeStore> {
+  let value: unknown;
+  try {
+    const text = await readFile(CONFIG_PATH, 'utf8');
+    value = JSON.parse(text);
+  } catch {
+    value = undefined;
+  }
+  if (isThemeStoreShape(value)) return coerceThemeStore(value);
+  // 旧版单配置迁移：成为「魈」默认主题的配置。
+  const raw =
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    activeThemeId: DEFAULT_THEME_ID,
+    themes: {
+      [DEFAULT_THEME_ID]: { name: DEFAULT_THEME_NAME, builtin: true, config: normalizeConfig(raw) },
+    },
+  };
+}
+
+/** 原子写回主题存储（确保目录存在）。 */
+async function writeThemeStore(store: ThemeStore): Promise<void> {
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
-  await writeFile(CONFIG_PATH, JSON.stringify(next, null, 2), 'utf8');
+  await writeFile(CONFIG_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+/** 读取「当前主题」的配置（文件缺失或损坏时回落默认值）。 */
+async function readConfig(): Promise<XiaoConfig> {
+  const store = await readThemeStore();
+  const entry = store.themes[store.activeThemeId]!;
+  return normalizeConfig(entry.config as unknown as Record<string, unknown>);
+}
+
+/** 写回「当前主题」的配置（next 已经规范化）。 */
+async function writeConfig(next: XiaoConfig): Promise<void> {
+  const store = await readThemeStore();
+  const entry = store.themes[store.activeThemeId];
+  if (entry) entry.config = next;
+  await writeThemeStore(store);
 }
 
 /** 读取并解析 JSON 请求体（空体返回空对象）。 */
@@ -180,6 +262,29 @@ function readRawBody(req: IncomingMessage): Promise<Buffer> {
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
   res.end(JSON.stringify(value));
+}
+
+/** 请求携带的 DSH 界面语言（x-xiao-lang 头）：zh / 其余按 en。 */
+function langFromReq(req: IncomingMessage): 'zh' | 'en' {
+  const h = String(req.headers['x-xiao-lang'] || '').toLowerCase();
+  return h === 'zh' ? 'zh' : 'en';
+}
+
+/** Host 端已知用户可见错误的中英文文案。 */
+const HOST_ERR = {
+  themeNotFound: { zh: '未找到主题', en: 'Theme not found' },
+  defaultNotDeletable: { zh: '默认主题不可删除', en: 'The default theme cannot be deleted' },
+  configRequired: { zh: '导入数据缺少 config', en: 'Import data is missing config' },
+  emptyUpload: { zh: '上传内容为空', en: 'Empty upload' },
+  fileTooLarge: { zh: '文件过大（最大 20MB）', en: 'File too large (max 20MB)' },
+} as const;
+
+/** 抛出型错误：已知的转成对应语言文案（如文件过大），系统错误原样保留。 */
+function requestError(req: IncomingMessage, error: unknown): string {
+  const lang = langFromReq(req);
+  const msg = error instanceof Error ? error.message : String(error);
+  if (msg === 'file too large (max 20MB)') return HOST_ERR.fileTooLarge[lang];
+  return msg;
 }
 
 /**
@@ -306,6 +411,39 @@ function isAnimatedGif(buf: Buffer): boolean {
   return false;
 }
 
+/** 读取请求 query 参数（?name=xxx）。 */
+function queryParam(req: IncomingMessage, name: string): string | null {
+  try {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    return url.searchParams.get(name);
+  } catch {
+    return null;
+  }
+}
+
+/** 生成唯一主题 id（时间戳 + 随机段）。 */
+function newThemeId(): string {
+  return 'theme-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 0xffffff).toString(36);
+}
+
+/** 主题摘要（列表用）。 */
+function summarizeTheme(entry: ThemeEntry, id: string, activeThemeId: string): ThemeSummary {
+  return { id, name: entry.name, builtin: entry.builtin === true, active: id === activeThemeId };
+}
+
+/** 主题列表响应。 */
+function themeList(store: ThemeStore): ThemeListResponse {
+  return {
+    activeThemeId: store.activeThemeId,
+    themes: Object.keys(store.themes).map((id) => summarizeTheme(store.themes[id]!, id, store.activeThemeId)),
+  };
+}
+
+/** 切到默认主题的兜底名（导入/新建用）。 */
+function fallbackThemeName(store: ThemeStore, prefix: string): string {
+  return prefix + ' ' + (Object.keys(store.themes).length + 1);
+}
+
 export function apply(ctx: HostCtx): void {
   // 1) 魈式语气：随配置 enabled + voiceEnabled 开/关，提示词内容（语言/自定义）变化时重建。
   let syncVoice: (() => Promise<void>) | null = null;
@@ -365,7 +503,7 @@ export function apply(ctx: HostCtx): void {
                 }
                 sendJson(res, 200, next);
               } catch (error) {
-                sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+                sendJson(res, 400, { error: requestError(req, error) });
               }
               return;
             }
@@ -455,7 +593,7 @@ export function apply(ctx: HostCtx): void {
                 const ext = resolveUploadExt(request);
                 const body = await readRawBody(request);
                 if (body.length === 0) {
-                  sendJson(response, 400, { error: 'empty upload' });
+                  sendJson(response, 400, { error: HOST_ERR.emptyUpload[langFromReq(request)] });
                   return;
                 }
                 await mkdir(UPLOAD_DIR, { recursive: true });
@@ -465,13 +603,212 @@ export function apply(ctx: HostCtx): void {
                 const dynamic = isAnimatedGif(body);
                 sendJson(response, 200, { imagePath: filePath.replace(/\\/g, '/'), dynamic });
               } catch (error) {
-                sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+                sendJson(response, 400, { error: requestError(request, error) });
               }
             };
             await doUpload(req, res);
           },
         }),
       'xiao-theme: upload route',
+    );
+
+    // —— 主题管理 API：列出 / 新建 / 切换 / 重命名 / 删除 / 导出 / 导入 ——
+    // 切换当前主题会改变当前配置，需同步重刷提示词（走系统提示注册表，不能被 /settings POST 覆盖才刷新）。
+    const syncVoiceNow = async (): Promise<void> => {
+      if (syncVoice !== null) {
+        try {
+          await syncVoice();
+        } catch (error) {
+          console.error('[xiao-theme] voice sync failed:', error);
+        }
+      }
+    };
+
+    const themeListCreateHandler: WebRouteHandler = async (req, res) => {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        sendJson(res, 200, themeList(await readThemeStore()));
+        return;
+      }
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const name =
+          typeof body.name === 'string' && body.name.trim().length > 0 ? body.name.trim() : null;
+        const store = await readThemeStore();
+        const current = store.themes[store.activeThemeId];
+        const id = newThemeId();
+        store.themes[id] = {
+          name: name ?? fallbackThemeName(store, '主题'),
+          builtin: false,
+          config: current ? { ...current.config } : { ...HOST_DEFAULT_CONFIG },
+        };
+        store.activeThemeId = id;
+        await writeThemeStore(store);
+        await syncVoiceNow();
+        sendJson(res, 200, summarizeTheme(store.themes[id]!, id, store.activeThemeId));
+      } catch (error) {
+        sendJson(res, 400, { error: requestError(req, error) });
+      }
+    };
+
+    const themeActivateHandler: WebRouteHandler = async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        const store = await readThemeStore();
+        if (!store.themes[id]) {
+          sendJson(res, 400, { error: HOST_ERR.themeNotFound[langFromReq(req)] });
+          return;
+        }
+        store.activeThemeId = id;
+        await writeThemeStore(store);
+        await syncVoiceNow();
+        const payload: ThemeActivateResponse = {
+          activeThemeId: store.activeThemeId,
+          config: normalizeConfig(store.themes[id]!.config as unknown as Record<string, unknown>),
+        };
+        sendJson(res, 200, payload);
+      } catch (error) {
+        sendJson(res, 400, { error: requestError(req, error) });
+      }
+    };
+
+    const themeRenameHandler: WebRouteHandler = async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        const name =
+          typeof body.name === 'string' && body.name.trim().length > 0 ? body.name.trim() : null;
+        const store = await readThemeStore();
+        const entry = store.themes[id];
+        if (!entry) {
+          sendJson(res, 400, { error: HOST_ERR.themeNotFound[langFromReq(req)] });
+          return;
+        }
+        if (name) entry.name = name;
+        await writeThemeStore(store);
+        sendJson(res, 200, summarizeTheme(entry, id, store.activeThemeId));
+      } catch (error) {
+        sendJson(res, 400, { error: requestError(req, error) });
+      }
+    };
+
+    const themeDeleteHandler: WebRouteHandler = async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        const store = await readThemeStore();
+        const entry = store.themes[id];
+        if (!entry) {
+          sendJson(res, 400, { error: HOST_ERR.themeNotFound[langFromReq(req)] });
+          return;
+        }
+        if (entry.builtin === true) {
+          sendJson(res, 400, { error: HOST_ERR.defaultNotDeletable[langFromReq(req)] });
+          return;
+        }
+        delete store.themes[id];
+        if (store.activeThemeId === id) store.activeThemeId = DEFAULT_THEME_ID;
+        await writeThemeStore(store);
+        await syncVoiceNow();
+        sendJson(res, 200, { activeThemeId: store.activeThemeId });
+      } catch (error) {
+        sendJson(res, 400, { error: requestError(req, error) });
+      }
+    };
+
+    const themeExportHandler: WebRouteHandler = async (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        const id = queryParam(req, 'id') || DEFAULT_THEME_ID;
+        const store = await readThemeStore();
+        const entry = store.themes[id];
+        if (!entry) {
+          sendJson(res, 400, { error: HOST_ERR.themeNotFound[langFromReq(req)] });
+          return;
+        }
+        const payload: ThemeExport = {
+          framework: 'xiao-theme-ts',
+          version: 1,
+          name: entry.name,
+          config: normalizeConfig(entry.config as unknown as Record<string, unknown>),
+        };
+        sendJson(res, 200, payload);
+      } catch (error) {
+        sendJson(res, 400, { error: requestError(req, error) });
+      }
+    };
+
+    const themeImportHandler: WebRouteHandler = async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const configRaw = body.config;
+        if (configRaw === null || typeof configRaw !== 'object' || Array.isArray(configRaw)) {
+          sendJson(res, 400, { error: HOST_ERR.configRequired[langFromReq(req)] });
+          return;
+        }
+        const store = await readThemeStore();
+        const name =
+          typeof body.name === 'string' && body.name.trim().length > 0
+            ? body.name.trim()
+            : fallbackThemeName(store, '导入主题');
+        const id = newThemeId();
+        store.themes[id] = {
+          name,
+          builtin: false,
+          config: normalizeConfig(configRaw as Record<string, unknown>),
+        };
+        await writeThemeStore(store);
+        sendJson(res, 200, summarizeTheme(store.themes[id]!, id, store.activeThemeId));
+      } catch (error) {
+        sendJson(res, 400, { error: requestError(req, error) });
+      }
+    };
+
+    httpCtx.effect(
+      () => {
+        const disposers: Array<() => void> = [];
+        disposers.push(
+          httpCtx.webServer.register({ kind: 'exact', path: '/xiao-theme/themes', handler: themeListCreateHandler }),
+          httpCtx.webServer.register({ kind: 'exact', path: '/xiao-theme/themes-activate', handler: themeActivateHandler }),
+          httpCtx.webServer.register({ kind: 'exact', path: '/xiao-theme/themes-rename', handler: themeRenameHandler }),
+          httpCtx.webServer.register({ kind: 'exact', path: '/xiao-theme/themes-delete', handler: themeDeleteHandler }),
+          httpCtx.webServer.register({ kind: 'exact', path: '/xiao-theme/themes-export', handler: themeExportHandler }),
+          httpCtx.webServer.register({ kind: 'exact', path: '/xiao-theme/themes-import', handler: themeImportHandler }),
+        );
+        return () => {
+          for (const d of disposers) d();
+        };
+      },
+      'xiao-theme: theme management routes',
     );
   });
 }

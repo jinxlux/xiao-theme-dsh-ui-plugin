@@ -20,7 +20,8 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 - **Frosted background**: configurable background image (relative plugin path, local absolute path, or direct upload), with adjustable blur and UI transparency. Uploading an **animated GIF** is auto-detected and used as a **live/dynamic background**; static images or single-frame GIFs keep the static frosted treatment.
 - **UI & sidebar transparency control**: UI opacity (0.3–0.9) controls the main content area; sidebar opacity (0–1) independently controls the left/right sidebars, up to 100% fully opaque while always letting part of the background through.
 - **Accent color**: jade green by default, or pick any accent via the color wheel; the whole jade palette (panel surfaces, borders, brand color, sidebars, background gradient) shifts in sync, persisted after change.
-- **Settings page**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, frosted background (on/path/upload/blur/opacity; GIF auto-detected as a dynamic background), UI and sidebar opacity.
+- **Theme management (multi-theme)**: save the current settings as a named theme, switch / rename / delete themes (the built-in "Xiao" theme is protected), reset the current theme back to defaults, and one-click import / export any theme as a `.json` file.
+- **Settings page**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, theme management, frosted background (on/path/upload/blur/opacity; GIF auto-detected as a dynamic background), UI and sidebar opacity.
 
 ## Requirements
 
@@ -65,7 +66,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 ## Usage & configuration
 
-- Open DSH Web → **Settings → Xiao Theme**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, frosted background (on / path / upload / blur / opacity; GIF auto-detected as a dynamic background), UI opacity, sidebar opacity.
+- Open DSH Web → **Settings → Xiao Theme**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, theme management, frosted background (on / path / upload / blur / opacity; GIF auto-detected as a dynamic background), UI opacity, sidebar opacity.
 - **Accent color**: pick an accent with the color wheel (default jade green `#2E8B72`); the panel surfaces, borders, brand color, sidebars and background gradient all shift in sync. Semantic state colors (error / warning / success) stay fixed and don't follow the accent.
 - **Mascot text**: badge title (default "靖妖傩舞") and subtitle (default "别挡路") can be set to any text; an empty title falls back to the default.
 - **UI opacity**: controls the main content area, range 0.3–0.9, capped so at least ~10% of the background stays visible.

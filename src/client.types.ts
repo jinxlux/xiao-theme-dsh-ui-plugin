@@ -32,10 +32,17 @@ export interface SlotsService {
   register(options: SlotRegisterOptions, render: () => React.ReactNode): void | (() => void);
 }
 
+/** DSH 客户端 locale 服务（@deepseek-ai/dsh-client-locale）。 */
+export interface LocaleService {
+  /** 当前 locale 快照；active 为 'zh' | 'en' 等。 */
+  getLocale(): { active: string };
+}
+
 /** 客户端插件依赖到的服务：key → 服务类型。 */
 export interface ClientServices {
   theme: ThemeService;
   slots: SlotsService;
+  locale: LocaleService;
 }
 
 /** 客户端 Cordis 插件上下文的最小类型面（只列出插件用到的成员）。 */
@@ -44,6 +51,10 @@ export interface ClientCtx {
   get<S extends keyof ClientServices>(service: S): ClientServices[S] | undefined;
   /** 注册一个副作用/清理函数。 */
   effect(fn: () => void | (() => void), label?: string): void;
+  /** 订阅一个 Cordis 事件（如 locale/change）。 */
+  on?(event: string, listener: (...args: unknown[]) => void): void;
+  /** 取消订阅。 */
+  off?(event: string, listener: (...args: unknown[]) => void): void;
 }
 
 /** 客户端插件导出的标准字段：`inject`（依赖的服务名）+ `apply`。 */

@@ -47,3 +47,33 @@ export interface XiaoConfig {
   /** 吉祥物徽章副标（默认「别挡路」）。 */
   mascotSubtitle: string;
 }
+
+/** 主题列表里的一条摘要（不含完整配置）。 */
+export interface ThemeSummary {
+  id: string;
+  name: string;
+  /** 内置主题（默认「魈」）：不可删除。 */
+  builtin: boolean;
+  /** 是否为当前激活主题。 */
+  active: boolean;
+}
+
+/** GET /xiao-theme/themes 的响应：当前主题 id + 主题摘要列表。 */
+export interface ThemeListResponse {
+  activeThemeId: string;
+  themes: ThemeSummary[];
+}
+
+/** POST /xiao-theme/themes-activate 的响应：切换后返回新当前主题的完整配置。 */
+export interface ThemeActivateResponse {
+  activeThemeId: string;
+  config: XiaoConfig;
+}
+
+/** 主题导出格式：一份完整配置 + 标识信息（供一键导入/导出）。 */
+export interface ThemeExport {
+  framework: 'xiao-theme-ts';
+  version: number;
+  name: string;
+  config: XiaoConfig;
+}

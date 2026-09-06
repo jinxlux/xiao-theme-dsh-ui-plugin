@@ -7,7 +7,7 @@
  * 构建时由 tsc 产出 ModuleLoader 兼容的 CommonJS，再由 scripts/wrap-client.mjs 包裹。
  */
 import * as React from 'react';
-import type { XiaoConfig } from './config';
+import type { XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport } from './config';
 import type { ClientCtx, ClientPlugin, ThemeTokenValue } from './client.types';
 
 /**
@@ -36,6 +36,81 @@ const CLIENT_RANGES = {
   sidebarOpacity: { min: 0, max: 1 },
 } as const;
 const PANEL_OPACITY_MAX = 0.9;
+
+let bgVersion = 0;
+
+/** DSH 当前界面语言（<html lang>）：zh* => 中文，否则英文。 */
+function currentLangZh(): boolean {
+  const lang = (document.documentElement.lang || '').toLowerCase();
+  return lang.startsWith('zh');
+}
+
+/** 把 DSH 界面语言随 x-xiao-lang 头发给 Host，用于错误文案本地化。 */
+function xiaoLangHeader(): Record<string, string> {
+  return { 'x-xiao-lang': currentLangZh() ? 'zh' : 'en' };
+}
+
+/** 设置页 / 主题管理 / 徽章提示的文案字典（跟随 DSH 界面语言）。 */
+const STR: Record<string, { zh: string; en: string }> = {
+  themeTitle: { zh: '魈主题', en: 'Xiao Theme' },
+  enableTheme: { zh: '启用魈主题', en: 'Enable Xiao theme' },
+  themeColor: { zh: '主题颜色', en: 'Theme color' },
+  voiceSection: { zh: '提示词', en: 'Voice prompt' },
+  injectVoice: { zh: '注入语气', en: 'Inject voice' },
+  templateLang: { zh: '模板语言', en: 'Template language' },
+  customPrompt: { zh: '自定义提示词', en: 'Custom prompt' },
+  promptPlaceholder: { zh: '留空则使用所选语言的默认模板；填写后优先使用自定义文本。', en: 'Leave empty to use the default template of the selected language; a custom prompt is used when set.' },
+  restorePrompt: { zh: '恢复提示词默认', en: 'Reset prompt' },
+  mascotSection: { zh: '吉祥物', en: 'Mascot' },
+  avatarPath: { zh: '头像图片路径', en: 'Avatar image path' },
+  titleField: { zh: '标题', en: 'Title' },
+  subtitleField: { zh: '副标', en: 'Subtitle' },
+  bgSection: { zh: '磨砂背景', en: 'Frosted background' },
+  enableBg: { zh: '启用磨砂背景', en: 'Enable frosted background' },
+  bgPath: { zh: '背景图路径', en: 'Background image path' },
+  uploadBg: { zh: '上传背景图', en: 'Upload background image' },
+  blurStrength: { zh: '磨砂强度', en: 'Blur strength' },
+  uiOpacity: { zh: '界面不透明度', en: 'UI opacity' },
+  sidebarOpacity: { zh: '侧栏不透明度', en: 'Sidebar opacity' },
+  useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
+  useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
+  settingsHint: { zh: '改动即时生效。背景图路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图会自动识别为动态背景；静态图片或单帧 GIF 仍按原静态磨砂背景处理。', en: 'Changes take effect immediately. The background path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF is auto-detected as a dynamic background; static images or single-frame GIFs keep the static frosted treatment.' },
+  themeManager: { zh: '主题管理', en: 'Theme management' },
+  themeManagerHint: { zh: '所有设置修改都会自动保存为当前主题修改。如果想创建新主题，请用「另存为新主题」创建，再在新主题下修改，才不会覆盖现在这个主题的设置。', en: 'All setting changes are automatically saved to the current theme. To create a new theme, use "Save as new theme" first, then edit under that new theme so you don\'t overwrite the current theme\'s settings.' },
+  currentTheme: { zh: '当前主题', en: 'Current theme' },
+  saveAsNewTheme: { zh: '另存为新主题', en: 'Save as new theme' },
+  themeNamePlaceholder: { zh: '主题名称', en: 'Theme name' },
+  save: { zh: '保存', en: 'Save' },
+  restoreDefault: { zh: '恢复默认', en: 'Restore defaults' },
+  restoreCurrentTheme: { zh: '恢复当前主题默认', en: 'Restore current theme to defaults' },
+  confirmRestore: { zh: '确认恢复默认', en: 'Confirm restore' },
+  restoreWarn: { zh: '注意：恢复默认会把【整个设置】重置回最初的「魈」主题（出厂默认值）。若当前使用的是其它主题，请谨慎使用。', en: 'Caution: restoring defaults resets the ENTIRE settings back to the original "Xiao" theme (factory defaults). If you are currently on another theme, use with care.' },
+  rename: { zh: '重命名', en: 'Rename' },
+  exportTheme: { zh: '导出', en: 'Export' },
+  deleteTheme: { zh: '删除', en: 'Delete' },
+  confirmDelete: { zh: '确认删除', en: 'Confirm delete' },
+  builtinSuffix: { zh: '（内置）', en: ' (built-in)' },
+  activeSuffix: { zh: '（当前）', en: ' (active)' },
+  importTheme: { zh: '导入主题', en: 'Import theme' },
+  importThemePrefix: { zh: '导入主题 ', en: 'Imported theme ' },
+  refresh: { zh: '刷新', en: 'Refresh' },
+  needThemeName: { zh: '请输入主题名称', en: 'Please enter a theme name' },
+  invalidImportFile: { zh: '无效的导入文件', en: 'Invalid import file' },
+  importMissingConfig: { zh: '导入文件缺少 config', en: 'Import file is missing config' },
+  builtinNotDelete: { zh: '内置主题不可删除', en: 'Built-in theme cannot be deleted' },
+  mascotDragClose: { zh: '按住拖动，点 × 关闭', en: 'Drag to move, click × to close' },
+  mascotDragOpen: { zh: '按住拖动，轻点重新打开', en: 'Drag to move, tap to reopen' },
+  mascotShow: { zh: '重新显示魈主题提示', en: 'Show the Xiao theme badge' },
+  mascotClose: { zh: '关闭魈主题提示', en: 'Close the Xiao theme badge' },
+  mascotCloseTip: { zh: '关闭（可随时从风印重新打开）', en: 'Close (reopen anytime from the wind mark)' },
+};
+
+/** 取当前语言的文案；未知 key 原样返回。 */
+function t(key: string): string {
+  const entry = STR[key];
+  if (!entry) return key;
+  return currentLangZh() ? entry.zh : entry.en;
+}
 
 /** 带 webkit 厂商前缀的 style（@types/react 的 DOM lib 未覆盖该属性）。 */
 interface StyleWithWebkit extends CSSStyleDeclaration {
@@ -125,7 +200,7 @@ function createConfigStore(): ConfigStore {
 /** 从 Host 半读配置。 */
 async function loadConfig(store: ConfigStore): Promise<void> {
   try {
-    const response = await fetch('/xiao-theme/settings', { cache: 'no-store' });
+    const response = await fetch('/xiao-theme/settings', { cache: 'no-store', headers: xiaoLangHeader() });
     if (!response.ok) return;
     store.set((await response.json()) as XiaoConfig);
   } catch (error) {
@@ -135,21 +210,39 @@ async function loadConfig(store: ConfigStore): Promise<void> {
 
 /** 写配置到 Host 半，成功则以 Host 返回值为准更新 store。 */
 async function saveConfig(store: ConfigStore, patch: Partial<XiaoConfig>): Promise<void> {
+  const prevPath = store.getSnapshot().backgroundImagePath;
   const next = { ...store.getSnapshot(), ...patch };
   // 本地先更新，保证 UI 即时反馈；Host 返回值再校准
   store.set(next);
   try {
     const response = await fetch('/xiao-theme/settings', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...xiaoLangHeader() },
       body: JSON.stringify(next),
     });
-    if (response.ok) store.set((await response.json()) as XiaoConfig);
+    if (response.ok) {
+      const saved = (await response.json()) as XiaoConfig;
+      // 背景图路径变化：等配置真正写回后 +1 版本号，让背景 URL 变化并重新拉取，避免竞态拿到旧图。
+      if (saved.backgroundImagePath !== prevPath) bgVersion++;
+      store.set(saved);
+    }
   } catch (error) {
     console.error('[xiao-theme] save settings failed:', error);
   }
 }
 
+/** 把「当前主题」整体重置为出厂默认配置（Host 侧 restoreDefaults=true）。 */
+async function restoreConfig(store: ConfigStore): Promise<void> {
+  const response = await fetch('/xiao-theme/settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...xiaoLangHeader() },
+    body: JSON.stringify({ restoreDefaults: true }),
+  });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  const saved = (await response.json()) as XiaoConfig;
+  if (saved.backgroundImagePath !== store.getSnapshot().backgroundImagePath) bgVersion++;
+  store.set(saved);
+}
 /** 上传背景图到 Host，成功后把返回的路径写入配置。 */
 async function uploadBackground(store: ConfigStore, file: File): Promise<boolean> {
   const match = /\.([a-zA-Z0-9]+)$/.exec(file.name || '');
@@ -157,6 +250,7 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<boolean
   try {
     const response = await fetch('/xiao-theme/upload?ext=.' + encodeURIComponent(ext), {
       method: 'POST',
+      headers: xiaoLangHeader(),
       body: file,
     });
     if (!response.ok) {
@@ -177,6 +271,80 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<boolean
   return false;
 }
 
+/** 通用 JSON fetch：非 2xx 抛出带 error 文本的异常。 */
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { ...init, headers: { ...(init && init.headers ? init.headers : {}), ...xiaoLangHeader() } });
+  if (!response.ok) {
+    let msg = 'HTTP ' + response.status;
+    try {
+      const data = (await response.json()) as { error?: unknown };
+      if (data && typeof data.error === 'string' && data.error.length > 0) msg = data.error;
+    } catch {
+      /* 忽略解析失败 */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as T;
+}
+
+// —— 主题管理 API ——
+async function listThemes(): Promise<ThemeListResponse> {
+  return fetchJson<ThemeListResponse>('/xiao-theme/themes', { cache: 'no-store' });
+}
+async function createTheme(name: string): Promise<ThemeSummary> {
+  return fetchJson<ThemeSummary>('/xiao-theme/themes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+}
+async function activateTheme(id: string): Promise<ThemeActivateResponse> {
+  return fetchJson<ThemeActivateResponse>('/xiao-theme/themes-activate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+}
+async function renameTheme(id: string, name: string): Promise<ThemeSummary> {
+  return fetchJson<ThemeSummary>('/xiao-theme/themes-rename', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id, name }),
+  });
+}
+async function deleteTheme(id: string): Promise<{ activeThemeId: string }> {
+  return fetchJson<{ activeThemeId: string }>('/xiao-theme/themes-delete', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+}
+async function exportTheme(id: string): Promise<ThemeExport> {
+  return fetchJson<ThemeExport>('/xiao-theme/themes-export?id=' + encodeURIComponent(id), { cache: 'no-store' });
+}
+async function importTheme(name: string, config: XiaoConfig): Promise<ThemeSummary> {
+  return fetchJson<ThemeSummary>('/xiao-theme/themes-import', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, config }),
+  });
+}
+
+/** 触发浏览器下载：导出主题为 .json 文件。 */
+function downloadTheme(theme: ThemeExport): void {
+  const blob = new Blob([JSON.stringify(theme, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (theme.name || 'xiao-theme') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 /** 根据配置构建主题 token 层：背景开启时把面板底色换成半透明（浅色/深色统一受 panelOpacity 控制）。 */
 function buildTokens(cfg: XiaoConfig): Record<string, ThemeTokenValue> {
   const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
@@ -278,7 +446,7 @@ function syncBackground(cfg: XiaoConfig): void {
   // 动态背景（GIF 动图）：以动画形式铺满；静态背景维持原有「URL+渐变」磨砂处理。
   de.classList.toggle('xiao-bg-dynamic', cfg.backgroundDynamic === true);
   // 追加背景路径作为缓存指纹：背景图一变化 URL 就变，浏览器立即重新拉取，无需手动刷新页面。
-  de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '")');
+  de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '&v=' + bgVersion + '")');
   de.style.setProperty('--xiao-bg-blur', blur + 'px');
   // 背景渐变随主色：中段 = 主色，两端为同色暗/亮。
   de.style.setProperty('--xiao-theme-color', themeColor);
@@ -495,13 +663,13 @@ function XiaoBadge({ title, subtitle }: { title: string; subtitle: string }): Re
       {
         className: 'xiao-mascot',
         style: styleFor,
-        title: '按住拖动，轻点重新打开',
+        title: t('mascotDragOpen'),
       },
       React.createElement(
         'button',
         {
           className: 'xiao-tab',
-          'aria-label': '重新显示魈主题提示',
+          'aria-label': t('mascotShow'),
           onPointerDown: tabDown,
           onPointerMove: tabMove,
           onPointerUp: tabUp,
@@ -517,7 +685,7 @@ function XiaoBadge({ title, subtitle }: { title: string; subtitle: string }): Re
     {
       className: 'xiao-mascot',
       style: styleFor,
-      title: '按住拖动，点 × 关闭',
+      title: t('mascotDragClose'),
       onPointerDown: startDrag,
       onPointerMove: onMove,
       onPointerUp: endDrag,
@@ -542,8 +710,8 @@ function XiaoBadge({ title, subtitle }: { title: string; subtitle: string }): Re
         'button',
         {
           className: 'xiao-close',
-          'aria-label': '关闭魈主题提示',
-          title: '关闭（可随时从风印重新打开）',
+          'aria-label': t('mascotClose'),
+          title: t('mascotCloseTip'),
           onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => e.stopPropagation(),
           onClick: () => setHidden(true),
         },
@@ -606,6 +774,289 @@ function RangeRow({
   );
 }
 
+/** 主题管理设置块：列出 / 新建 / 切换 / 重命名 / 删除 / 导入 / 导出（默认「魈」内置主题不可删除）。 */
+function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
+  const [themes, setThemes] = React.useState<ThemeSummary[] | null>(null);
+  const [activeId, setActiveId] = React.useState<string>('');
+  const [newName, setNewName] = React.useState<string>('');
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editingName, setEditingName] = React.useState<string>('');
+  const [pendingDeleteId, setPendingDeleteId] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState<boolean>(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [pendingRestore, setPendingRestore] = React.useState<boolean>(false);
+
+  const refresh = React.useCallback(async (): Promise<void> => {
+    try {
+      const res = await listThemes();
+      setThemes(res.themes);
+      setActiveId(res.activeThemeId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const fail = (e: unknown): void => setError(e instanceof Error ? e.message : String(e));
+
+  const onActivate = async (id: string): Promise<void> => {
+    if (busy || !id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await activateTheme(id);
+      store.set(res.config); // 触发主题/背景重同步；提示词由 Host 端 syncVoice 重刷
+      setActiveId(res.activeThemeId);
+      await refresh();
+    } catch (e) {
+      fail(e);
+    }
+    setBusy(false);
+  };
+
+  const onCreate = async (): Promise<void> => {
+    if (busy) return;
+    const name = newName.trim();
+    if (!name) {
+      setError(t('needThemeName'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await createTheme(name);
+      setNewName('');
+      await refresh();
+    } catch (e) {
+      fail(e);
+    }
+    setBusy(false);
+  };
+
+  const onRename = async (id: string, name: string): Promise<void> => {
+    const trimmed = name.trim();
+    setEditingId(null);
+    setEditingName('');
+    if (busy || !trimmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await renameTheme(id, trimmed);
+      await refresh();
+    } catch (e) {
+      fail(e);
+    }
+    setBusy(false);
+  };
+
+  const onDelete = async (id: string): Promise<void> => {
+    if (busy) return;
+    if (pendingDeleteId !== id) {
+      setPendingDeleteId(id);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const wasActive = activeId === id;
+    try {
+      const res = await deleteTheme(id);
+      setPendingDeleteId(null);
+      if (wasActive) {
+        await loadConfig(store); // 删除的是当前主题 → 回落默认并重拉配置
+        setActiveId(res.activeThemeId);
+      }
+      await refresh();
+    } catch (e) {
+      fail(e);
+      setPendingDeleteId(null);
+    }
+    setBusy(false);
+  };
+
+  const onExport = async (id: string): Promise<void> => {
+    setError(null);
+    try {
+      downloadTheme(await exportTheme(id));
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setError(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { name?: unknown; config?: unknown };
+      if (parsed === null || typeof parsed !== 'object') throw new Error(t('invalidImportFile'));
+      const name =
+        typeof parsed.name === 'string' && parsed.name.trim().length > 0 ? parsed.name.trim() : '';
+      if (parsed.config === null || typeof parsed.config !== 'object' || Array.isArray(parsed.config)) {
+        throw new Error(t('importMissingConfig'));
+      }
+      await importTheme(name || t('importThemePrefix') + ((themes ? themes.length : 0) + 1), parsed.config as XiaoConfig);
+      await refresh();
+    } catch (ex) {
+      fail(ex);
+    }
+  };
+
+  const onRestoreDefaults = async (): Promise<void> => {
+    if (busy) return;
+    if (!pendingRestore) {
+      setPendingRestore(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setPendingRestore(false);
+    try {
+      await restoreConfig(store);
+      await refresh();
+    } catch (e) {
+      fail(e);
+    }
+    setBusy(false);
+  };
+
+  const themeList = themes || [];
+  const selectOptions = themeList.map((t2) =>
+    React.createElement('option', { key: t2.id, value: t2.id }, t2.name + (t2.builtin ? t('builtinSuffix') : '')),
+  );
+  const themeRows = themeList.map((t2) => {
+    const editing = editingId === t2.id;
+    const nameContent = editing
+      ? React.createElement('input', {
+          className: 'xiao-settings-input',
+          value: editingName,
+          autoFocus: true,
+          onChange: (e: React.ChangeEvent<HTMLInputElement>) => setEditingName(e.target.value),
+          onBlur: () => void onRename(t2.id, editingName),
+          onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+            if (e.key === 'Enter') void onRename(t2.id, editingName);
+            else if (e.key === 'Escape') {
+              setEditingId(null);
+              setEditingName('');
+            }
+          },
+        })
+      : React.createElement('span', { className: 'xiao-settings-name' }, t2.name + (t2.active ? t('activeSuffix') : ''));
+    return React.createElement(
+      'div',
+      { className: 'xiao-settings-row', key: t2.id },
+      nameContent,
+      editing
+        ? null
+        : React.createElement(
+            'button',
+            {
+              className: 'xiao-settings-btn',
+              type: 'button',
+              disabled: busy,
+              onClick: () => {
+                setEditingId(t2.id);
+                setEditingName(t2.name);
+              },
+            },
+            t('rename'),
+          ),
+      React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => void onExport(t2.id) }, t('exportTheme')),
+      t2.builtin
+        ? React.createElement('button', { className: 'xiao-settings-btn', type: 'button', disabled: true, title: t('builtinNotDelete') }, t('deleteTheme'))
+        : React.createElement(
+            'button',
+            {
+              className: 'xiao-settings-btn' + (pendingDeleteId === t2.id ? ' xiao-settings-danger' : ''),
+              type: 'button',
+              disabled: busy,
+              onClick: () => void onDelete(t2.id),
+            },
+            pendingDeleteId === t2.id ? t('confirmDelete') : t('deleteTheme'),
+          ),
+    );
+  });
+
+  return React.createElement(
+    'div',
+    { className: 'xiao-settings-section' },
+    React.createElement('div', { className: 'xiao-settings-title' }, t('themeManager')),
+    React.createElement('div', { className: 'xiao-settings-hint' }, t('themeManagerHint')),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('currentTheme')),
+      React.createElement(
+        'select',
+        {
+          className: 'xiao-settings-select',
+          value: activeId || '',
+          disabled: busy || themeList.length === 0,
+          onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void onActivate(e.target.value),
+        },
+        ...selectOptions,
+      ),
+    ),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('saveAsNewTheme')),
+      React.createElement('input', {
+        className: 'xiao-settings-input',
+        type: 'text',
+        value: newName,
+        placeholder: t('themeNamePlaceholder'),
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => setNewName(e.target.value),
+        onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+          if (e.key === 'Enter') void onCreate();
+        },
+      }),
+      React.createElement('button', { className: 'xiao-settings-btn', type: 'button', disabled: busy, onClick: () => void onCreate() }, t('save')),
+    ),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('restoreDefault')),
+      React.createElement(
+        'button',
+        {
+          className: 'xiao-settings-btn' + (pendingRestore ? ' xiao-settings-danger' : ''),
+          type: 'button',
+          disabled: busy,
+          onClick: () => void onRestoreDefaults(),
+        },
+        pendingRestore ? t('confirmRestore') : t('restoreCurrentTheme'),
+      ),
+    ),
+    ...(pendingRestore
+      ? [
+          React.createElement(
+            'div',
+            { className: 'xiao-settings-warn' },
+            t('restoreWarn'),
+          ),
+        ]
+      : []),
+    ...themeRows,
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('importTheme')),
+      React.createElement('input', {
+        className: 'xiao-settings-file',
+        type: 'file',
+        accept: '.json,application/json',
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => void onImportFile(e),
+      }),
+      React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => void refresh() }, t('refresh')),
+    ),
+    ...(error ? [React.createElement('div', { className: 'xiao-settings-hint' }, error)] : []),
+  );
+}
 /** 设置页组件：提示词（语言/自定义/恢复默认）+ 头像 + 磨砂背景（开关/路径/上传/参数）。 */
 function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
@@ -632,15 +1083,16 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
   return React.createElement(
     'div',
     { className: 'xiao-settings' },
+    React.createElement(ThemeManager, { store }),
     // —— 总开关 ——
     React.createElement(
       'div',
       { className: 'xiao-settings-section' },
-      React.createElement('div', { className: 'xiao-settings-title' }, '魈主题'),
+      React.createElement('div', { className: 'xiao-settings-title' }, t('themeTitle')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '启用魈主题'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('enableTheme')),
         React.createElement('input', {
           type: 'checkbox',
           checked: enabled,
@@ -652,7 +1104,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '主题颜色'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('themeColor')),
         React.createElement('input', {
           className: 'xiao-settings-color',
           type: 'color',
@@ -668,11 +1120,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     React.createElement(
       'div',
       { className: 'xiao-settings-section' },
-      React.createElement('div', { className: 'xiao-settings-title' }, '提示词'),
+      React.createElement('div', { className: 'xiao-settings-title' }, t('voiceSection')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '注入语气'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('injectVoice')),
         React.createElement('input', {
           type: 'checkbox',
           checked: voiceEnabled,
@@ -684,7 +1136,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '模板语言'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('templateLang')),
         React.createElement(
           'select',
           {
@@ -702,14 +1154,14 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row xiao-settings-row-top' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '自定义提示词'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('customPrompt')),
         React.createElement('textarea', {
           className: 'xiao-settings-textarea',
           defaultValue: voicePrompt,
           key: voicePrompt,
           rows: 5,
           disabled: !voiceEnabled,
-          placeholder: '留空则使用所选语言的默认模板；填写后优先使用自定义文本。',
+          placeholder: t('promptPlaceholder'),
           onBlur: (e: React.FocusEvent<HTMLTextAreaElement>) => {
             const next = e.target.value;
             if (next !== cfg.voicePrompt) void saveConfig(store, { voicePrompt: next });
@@ -727,7 +1179,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             disabled: !voiceEnabled,
             onClick: () => void saveConfig(store, { voiceLanguage: 'en', voicePrompt: '', voiceEnabled: true }),
           },
-          '恢复提示词默认',
+          t('restorePrompt'),
         ),
       ),
     ),
@@ -736,11 +1188,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     React.createElement(
       'div',
       { className: 'xiao-settings-section' },
-      React.createElement('div', { className: 'xiao-settings-title' }, '吉祥物'),
+      React.createElement('div', { className: 'xiao-settings-title' }, t('mascotSection')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '头像图片路径'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('avatarPath')),
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
@@ -755,7 +1207,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '标题'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('titleField')),
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
@@ -769,7 +1221,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '副标'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('subtitleField')),
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
@@ -786,11 +1238,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     React.createElement(
       'div',
       { className: 'xiao-settings-section' },
-      React.createElement('div', { className: 'xiao-settings-title' }, '磨砂背景'),
+      React.createElement('div', { className: 'xiao-settings-title' }, t('bgSection')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '启用磨砂背景'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('enableBg')),
         React.createElement('input', {
           type: 'checkbox',
           checked: bgEnabled,
@@ -802,7 +1254,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '背景图路径'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('bgPath')),
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
@@ -821,7 +1273,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, '上传背景图'),
+        React.createElement('label', { className: 'xiao-settings-label' }, t('uploadBg')),
         React.createElement('input', {
           className: 'xiao-settings-file',
           type: 'file',
@@ -830,7 +1282,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         }),
       ),
       React.createElement(RangeRow, {
-        label: '磨砂强度',
+        label: t('blurStrength'),
         value: clampNum(cfg.backgroundBlur, CLIENT_RANGES.backgroundBlur.min, CLIENT_RANGES.backgroundBlur.max, 22),
         min: 0,
         max: 60,
@@ -841,7 +1293,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         },
       }),
       React.createElement(RangeRow, {
-        label: '界面不透明度',
+        label: t('uiOpacity'),
         value: clampNum(cfg.panelOpacity, CLIENT_RANGES.panelOpacity.min, CLIENT_RANGES.panelOpacity.max, 0.5),
         min: 0.3,
         max: 0.9,
@@ -852,7 +1304,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         },
       }),
       React.createElement(RangeRow, {
-        label: '侧栏不透明度',
+        label: t('sidebarOpacity'),
         value: clampNum(cfg.sidebarOpacity, CLIENT_RANGES.sidebarOpacity.min, CLIENT_RANGES.sidebarOpacity.max, 0.85),
         min: 0,
         max: 1,
@@ -880,7 +1332,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
                 sidebarOpacity: 0.85,
               }),
           },
-          '使用静态背景默认',
+          t('useStaticDefault'),
         ),
         React.createElement(
           'button',
@@ -894,7 +1346,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
                 backgroundDynamic: true,
               }),
           },
-          '使用动态背景示例',
+          t('useDynamicExample'),
         ),
       ),
     ),
@@ -902,7 +1354,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     React.createElement(
       'div',
       { className: 'xiao-settings-hint' },
-      '改动即时生效。背景图路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图会自动识别为动态背景；静态图片或单帧 GIF 仍按原静态磨砂背景处理。',
+      t('settingsHint'),
     ),
   );
 }
@@ -952,6 +1404,9 @@ const XIAO_CSS: string[] = [
   '.xiao-settings-color::-webkit-color-swatch{border:none;border-radius:50%;}',
   '.xiao-settings-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;}',
   '.xiao-settings-btn:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}',
+  '.xiao-settings-name{font-size:14px;color:var(--dsw-alias-label-primary);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+  '.xiao-settings-danger{border-color:var(--dsw-alias-state-error-primary)!important;color:var(--dsw-alias-state-error-primary)!important;}',
+  '.xiao-settings-warn{font-size:12px;color:var(--dsw-alias-state-warn-primary);line-height:1.6;padding:2px 0;}',
   '.xiao-settings-hint{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.6;}',
 ];
 
@@ -1046,10 +1501,42 @@ function apply(ctx: ClientCtx): void {
       React.createElement(XiaoOverlay, { store }),
     ),
   );
-  slots.inject('settings.section', () =>
-    slots.register({ name: 'settings.section', id: 'xiao-theme-ts', order: 100, label: '魈主题' }, () =>
-      React.createElement(XiaoSettingsPage, { store }),
-    ),
+  // settings.section 标题需跟随 DSH 界面语言：用 slots.inject 声明该 slot（必须，否则 DSH 会报“slot 未声明”崩溃），
+  // 并在语言变化（<html lang> 更新）时 dispose 旧 inject + 重 inject 以更新 label。
+  const localeSvc = ctx.get('locale');
+  let settingsInject: (() => void) | null = null;
+  const sectionLabel = (): string => {
+    const active = localeSvc ? localeSvc.getLocale().active : '';
+    if (active === 'zh') return STR.themeTitle!.zh;
+    if (active === 'en') return STR.themeTitle!.en;
+    return t('themeTitle');
+  };
+  const registerSettings = (): void => {
+    try {
+      if (settingsInject !== null) {
+        settingsInject();
+        settingsInject = null;
+      }
+      const d = slots.inject('settings.section', () =>
+        slots.register({ name: 'settings.section', id: 'xiao-theme-ts', order: 100, label: sectionLabel() }, () =>
+          React.createElement(XiaoSettingsPage, { store }),
+        ),
+      );
+      settingsInject = typeof d === 'function' ? d : null;
+    } catch (error) {
+      console.error('[xiao-theme] settings.section register failed:', error);
+    }
+  };
+  // 语言变化（DSH 更新 <html lang>）时重注册；覆盖初始时序（lang 尚未设置）与后续切换。
+  const langObserver = new MutationObserver(() => registerSettings());
+  langObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+  registerSettings();
+  ctx.effect(
+    () => () => {
+      langObserver.disconnect();
+      if (settingsInject !== null) settingsInject();
+    },
+    'xiao-theme: settings section locale sync',
   );
 }
 
