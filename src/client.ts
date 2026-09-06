@@ -22,6 +22,7 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   voicePrompt: '',
   backgroundEnabled: true,
   backgroundImagePath: 'resource/avatar.png',
+  backgroundDynamic: false,
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
@@ -162,9 +163,12 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<boolean
       console.error('[xiao-theme] upload failed:', response.status);
       return false;
     }
-    const data = (await response.json()) as { imagePath?: unknown };
+    const data = (await response.json()) as { imagePath?: unknown; dynamic?: unknown };
     if (data && typeof data.imagePath === 'string' && data.imagePath.length > 0) {
-      await saveConfig(store, { backgroundImagePath: data.imagePath });
+      const patch: Partial<XiaoConfig> = { backgroundImagePath: data.imagePath };
+      // Host 已自动识别是否为动态 GIF：GIF 动图 => dynamic=true；静态图/单帧 GIF => false。
+      if (typeof data.dynamic === 'boolean') patch.backgroundDynamic = data.dynamic;
+      await saveConfig(store, patch);
       return true;
     }
   } catch (error) {
@@ -241,6 +245,7 @@ function syncBackground(cfg: XiaoConfig): void {
   const frame = findFrameElement();
   if (!on) {
     de.classList.remove('xiao-bg-on');
+    de.classList.remove('xiao-bg-dynamic');
     de.style.removeProperty('--xiao-bg-img');
     de.style.removeProperty('--xiao-bg-blur');
     de.style.removeProperty('--xiao-bg-ovl');
@@ -270,7 +275,10 @@ function syncBackground(cfg: XiaoConfig): void {
   const [dr, dg, db] = surf.dark;
   const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
   de.classList.add('xiao-bg-on');
-  de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg")');
+  // 动态背景（GIF 动图）：以动画形式铺满；静态背景维持原有「URL+渐变」磨砂处理。
+  de.classList.toggle('xiao-bg-dynamic', cfg.backgroundDynamic === true);
+  // 追加背景路径作为缓存指纹：背景图一变化 URL 就变，浏览器立即重新拉取，无需手动刷新页面。
+  de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '")');
   de.style.setProperty('--xiao-bg-blur', blur + 'px');
   // 背景渐变随主色：中段 = 主色，两端为同色暗/亮。
   de.style.setProperty('--xiao-theme-color', themeColor);
@@ -289,6 +297,11 @@ function syncBackground(cfg: XiaoConfig): void {
     frame.style.backdropFilter = 'blur(' + blur + 'px)';
     (frame.style as StyleWithWebkit).webkitBackdropFilter = 'blur(' + blur + 'px)';
   }
+  // 强制重绘：背景挂在 background-attachment:fixed 下时，仅改 CSS 变量在某些浏览器不会刷新背景图层
+  //（表现为必须整页刷新才生效）。这里显式移除再重加 xiao-bg-on 并触发一次重排，迫使浏览器重新取回并绘制新背景。
+  de.classList.remove('xiao-bg-on');
+  void de.offsetHeight;
+  de.classList.add('xiao-bg-on');
 }
 
 function clamp01(value: number): number {
@@ -797,7 +810,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
           key: bgPath,
           onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
             const next = e.target.value.trim();
-            if (next.length > 0) void saveConfig(store, { backgroundImagePath: next });
+            if (next.length > 0) {
+              // GIF 即动图：手动填 .gif 路径时自动视为动态背景；其余按静态背景。
+              const isGif = /\.gif$/i.test(next);
+              void saveConfig(store, { backgroundImagePath: next, backgroundDynamic: isGif });
+            }
           },
         }),
       ),
@@ -857,12 +874,27 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
               void saveConfig(store, {
                 backgroundEnabled: true,
                 backgroundImagePath: 'resource/avatar.png',
+                backgroundDynamic: false,
                 backgroundBlur: 22,
                 panelOpacity: 0.5,
                 sidebarOpacity: 0.85,
               }),
           },
-          '恢复背景默认',
+          '使用静态背景默认',
+        ),
+        React.createElement(
+          'button',
+          {
+            className: 'xiao-settings-btn',
+            type: 'button',
+            onClick: () =>
+              void saveConfig(store, {
+                backgroundEnabled: true,
+                backgroundImagePath: 'resource/xiao_dynamic.gif',
+                backgroundDynamic: true,
+              }),
+          },
+          '使用动态背景示例',
         ),
       ),
     ),
@@ -870,7 +902,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     React.createElement(
       'div',
       { className: 'xiao-settings-hint' },
-      '改动即时生效。背景图路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。',
+      '改动即时生效。背景图路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图会自动识别为动态背景；静态图片或单帧 GIF 仍按原静态磨砂背景处理。',
     ),
   );
 }
@@ -878,6 +910,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
 const XIAO_CSS: string[] = [
   'html.xiao-bg-on,html.xiao-bg-on body{background-color:transparent!important;}',
   'html.xiao-bg-on body{background-image:var(--xiao-bg-img),linear-gradient(135deg,var(--xiao-grad-a),var(--xiao-theme-color) 55%,var(--xiao-grad-b))!important;background-color:transparent!important;background-attachment:fixed!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important;}',
+  // 动态背景（GIF 动图）：覆盖为纯动图（去掉渐变着色），让动画按原色铺满并随页面播放；static 维持上方「URL+渐变」磨砂处理。
+  'html.xiao-bg-on.xiao-bg-dynamic body{background-image:var(--xiao-bg-img)!important;}',
   'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
   'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
   // 左右侧栏独立底色：用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
@@ -974,6 +1008,7 @@ function apply(ctx: ClientCtx): void {
     () => () => {
       const de = document.documentElement;
       de.classList.remove('xiao-bg-on');
+      de.classList.remove('xiao-bg-dynamic');
       de.style.removeProperty('--xiao-bg-img');
       de.style.removeProperty('--xiao-bg-blur');
       de.style.removeProperty('--xiao-bg-ovl');

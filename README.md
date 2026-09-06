@@ -2,7 +2,7 @@
 
 # xiao-ui-theme-ts
 
-A **highly customizable theme plugin** for DeepSeek Harness (ships with a "Xiao" jade-green look by default). It themes the DeepSeek Harness web UI: colors, mascot badge, frosted background, and injected voice are all configurable. Out of the box it's a Xiao-style jade/emerald theme, but the accent color, badge text, voice, and background transparency are all tweakable — make it your own.
+A **highly customizable theme plugin** for DeepSeek Harness (ships with a "Xiao" jade-green look by default). It themes the DeepSeek Harness web UI: colors, mascot badge, background, and injected voice are all configurable. The background supports **both static images and animated GIFs** — an uploaded animated GIF is auto-detected and used as a live/dynamic background. Out of the box it's a Xiao-style jade/emerald theme, but the accent color, badge text, voice, and background are all tweakable — make it your own.
 
 ## What is this
 
@@ -17,10 +17,10 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 - **Customizable palette (jade/emerald by default)**: light / dark jade palettes; pick the accent with a color wheel, and toggle the theme off from settings.
 - **Mascot badge**: a draggable, collapsible badge (bottom-right); title and subtitle can be set to any text.
 - **Xiao-style voice**: injects a Xiao-voice instruction into the system prompt (toggleable), with Chinese / English templates or your own custom prompt.
-- **Frosted background**: configurable background image (relative plugin path, local absolute path, or direct upload), with adjustable blur and UI transparency.
+- **Frosted background**: configurable background image (relative plugin path, local absolute path, or direct upload), with adjustable blur and UI transparency. Uploading an **animated GIF** is auto-detected and used as a **live/dynamic background**; static images or single-frame GIFs keep the static frosted treatment.
 - **UI & sidebar transparency control**: UI opacity (0.3–0.9) controls the main content area; sidebar opacity (0–1) independently controls the left/right sidebars, up to 100% fully opaque while always letting part of the background through.
 - **Accent color**: jade green by default, or pick any accent via the color wheel; the whole jade palette (panel surfaces, borders, brand color, sidebars, background gradient) shifts in sync, persisted after change.
-- **Settings page**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, frosted background (on/path/upload/blur/opacity), UI and sidebar opacity.
+- **Settings page**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, frosted background (on/path/upload/blur/opacity; GIF auto-detected as a dynamic background), UI and sidebar opacity.
 
 ## Requirements
 
@@ -65,7 +65,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 
 ## Usage & configuration
 
-- Open DSH Web → **Settings → Xiao Theme**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, frosted background (on / path / upload / blur / opacity), UI opacity, sidebar opacity.
+- Open DSH Web → **Settings → Xiao Theme**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, frosted background (on / path / upload / blur / opacity; GIF auto-detected as a dynamic background), UI opacity, sidebar opacity.
 - **Accent color**: pick an accent with the color wheel (default jade green `#2E8B72`); the panel surfaces, borders, brand color, sidebars and background gradient all shift in sync. Semantic state colors (error / warning / success) stay fixed and don't follow the accent.
 - **Mascot text**: badge title (default "靖妖傩舞") and subtitle (default "别挡路") can be set to any text; an empty title falls back to the default.
 - **UI opacity**: controls the main content area, range 0.3–0.9, capped so at least ~10% of the background stays visible.
@@ -81,7 +81,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
   dsh plugin --profile web add xiao-ui-theme-ts
   ```
 - **Build before mounting**: `lib/` is build output, not committed. After clone, run `pnpm install && pnpm run build` first, then `dsh plugin add`; adding an unbuilt directory fails because `lib/` is missing.
-- Default avatar / background use **in-package relative paths** (`resource/avatar.png`, `resource/bg.svg`), readable across machines; keep `resource/` at the same level as `lib/` after building (current layout works).
+- Default avatar / background use **in-package relative paths** (`resource/avatar.png`), readable across machines; keep `resource/` at the same level as `lib/` after building (current layout works). `resource/bg.svg` is legacy and no longer used.
 - The Xiao-voice prompt depends on DSH's `systemPrompt` assembly. If the agent preset filters the prompt down to only a persona, or uses a **complete persona**, the voice may not appear in that session (that's preset behavior, not a plugin bug).
 - "Sidebar opacity" targets DSH's `sidebarCol / detailsCol` columns and the third-party better-sidebar's `data-dsh-panel / data-dsh-pane` attributes; without better-sidebar installed, the right-side rules simply do nothing and don't affect the main UI.
 - This plugin **does not read environment variables** for configuration; settings come only from `~/.dsh/xiao-theme.json` and compile-time defaults.

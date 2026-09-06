@@ -23,6 +23,8 @@ export interface XiaoConfig {
   backgroundEnabled: boolean;
   /** 背景图路径：支持相对插件根（resource/avatar.png）或绝对路径。 */
   backgroundImagePath: string;
+  /** 是否为动态背景（gif 动图）：true 表示背景图是动态 GIF，按动图背景渲染。 */
+  backgroundDynamic: boolean;
   /** 磨砂背景模糊强度（px）。 */
   backgroundBlur: number;
   /**

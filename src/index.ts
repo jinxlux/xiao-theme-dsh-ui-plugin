@@ -28,6 +28,7 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   voicePrompt: '',
   backgroundEnabled: true,
   backgroundImagePath: 'resource/avatar.png',
+  backgroundDynamic: false,
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
@@ -88,6 +89,7 @@ async function readConfig(): Promise<XiaoConfig> {
       typeof parsed.backgroundImagePath === 'string' && parsed.backgroundImagePath.length > 0
         ? parsed.backgroundImagePath
         : HOST_DEFAULT_CONFIG.backgroundImagePath,
+    backgroundDynamic: parsed.backgroundDynamic === true,
     backgroundBlur: clamp(
       parsed.backgroundBlur,
       HOST_RANGES.backgroundBlur.min,
@@ -245,6 +247,10 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
       typeof body.backgroundImagePath === 'string' && body.backgroundImagePath.length > 0
         ? body.backgroundImagePath
         : current.backgroundImagePath,
+    backgroundDynamic:
+      typeof body.backgroundDynamic === 'boolean'
+        ? body.backgroundDynamic
+        : current.backgroundDynamic,
     backgroundBlur:
       clampNum(body.backgroundBlur, HOST_RANGES.backgroundBlur.min, HOST_RANGES.backgroundBlur.max) ??
       current.backgroundBlur,
@@ -282,6 +288,22 @@ function resolveUploadExt(req: IncomingMessage): string {
   const headerExt = String(req.headers['x-xiao-ext'] || '').toLowerCase();
   if (/^\.(png|jpe?g|webp|gif|svg)$/.test(headerExt)) ext = headerExt.replace('jpeg', 'jpg');
   return ext;
+}
+
+/**
+ * 判断上传内容是否为「动图 GIF」（多帧动画）。
+ * 仅识别 GIF87a/GIF89a，并统计图形控制扩展（GCE，0x21 0xF9 0x04）数量：
+ * 动图必然 ≥2 个（每帧一个），静态/单帧 GIF 至多 1 个；非 GIF 直接 false。
+ */
+function isAnimatedGif(buf: Buffer): boolean {
+  if (buf.length < 6) return false;
+  if (buf.toString('latin1', 0, 3) !== 'GIF') return false;
+  let gce = 0;
+  for (let i = 0; i + 2 < buf.length; i++) {
+    if (buf[i] === 0x21 && buf[i + 1] === 0xf9 && buf[i + 2] === 0x04) gce++;
+    if (gce >= 2) return true;
+  }
+  return false;
 }
 
 export function apply(ctx: HostCtx): void {
@@ -439,7 +461,9 @@ export function apply(ctx: HostCtx): void {
                 await mkdir(UPLOAD_DIR, { recursive: true });
                 const filePath = join(UPLOAD_DIR, `bg-${Date.now()}${ext}`);
                 await writeFile(filePath, body);
-                sendJson(response, 200, { imagePath: filePath.replace(/\\/g, '/') });
+                // 自动检测：是否为动态 GIF（多帧动画）。GIF 动图 => dynamic=true；静态图/单帧 GIF => false。
+                const dynamic = isAnimatedGif(body);
+                sendJson(response, 200, { imagePath: filePath.replace(/\\/g, '/'), dynamic });
               } catch (error) {
                 sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
               }
