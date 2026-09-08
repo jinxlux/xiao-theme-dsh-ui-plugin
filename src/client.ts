@@ -23,6 +23,7 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   backgroundEnabled: true,
   backgroundImagePath: 'resource/avatar.png',
   backgroundDynamic: false,
+  backgroundVideoAudio: false,
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
@@ -76,7 +77,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   sidebarOpacity: { zh: '侧栏不透明度', en: 'Sidebar opacity' },
   useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
   useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
-  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图会自动识别为动态背景；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF is auto-detected as a dynamic background; static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading.' },
+  videoAudio: { zh: '视频背景声音', en: 'Background video audio' },
+  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片/视频（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图或 MP4/WebM 视频会自动识别为动态背景（视频背景可在下方选择是否播放声音）；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image or video (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF or MP4/WebM video is auto-detected as a dynamic background (video backgrounds can optionally play sound below); static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading.' },
   themeManager: { zh: '主题管理', en: 'Theme management' },
   themeManagerHint: { zh: '所有设置修改都会自动保存为当前主题修改。如果想创建新主题，请用「另存为新主题」创建，再在新主题下修改，才不会覆盖现在这个主题的设置。', en: 'All setting changes are automatically saved to the current theme. To create a new theme, use "Save as new theme" first, then edit under that new theme so you don\'t overwrite the current theme\'s settings.' },
   currentTheme: { zh: '当前主题', en: 'Current theme' },
@@ -248,8 +250,23 @@ async function restoreConfig(store: ConfigStore): Promise<void> {
   if (saved.backgroundImagePath !== store.getSnapshot().backgroundImagePath) bgVersion++;
   store.set(saved);
 }
-/** 上传背景图到 Host，成功后把返回的路径写入配置。 */
-async function uploadBackground(store: ConfigStore, file: File): Promise<boolean> {
+
+/** 从失败的响应里提取 Host 返回的本地化错误文案；解析不到则回退到 HTTP 状态码。 */
+async function errorText(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: unknown };
+    if (data && typeof data.error === 'string' && data.error.length > 0) return data.error;
+  } catch {
+    /* body 非 JSON，忽略 */
+  }
+  return 'HTTP ' + response.status;
+}
+
+/**
+ * 上传背景图/视频到 Host，成功后把返回路径写入配置。
+ * 返回 null 表示成功；否则返回用户可见的错误信息（来自 Host 的本地化 error 字段）。
+ */
+async function uploadBackground(store: ConfigStore, file: File): Promise<string | null> {
   const match = /\.([a-zA-Z0-9]+)$/.exec(file.name || '');
   const ext = match ? match[1]!.toLowerCase() : 'png';
   try {
@@ -260,24 +277,25 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<boolean
     });
     if (!response.ok) {
       console.error('[xiao-theme] upload failed:', response.status);
-      return false;
+      return await errorText(response);
     }
     const data = (await response.json()) as { imagePath?: unknown; dynamic?: unknown };
     if (data && typeof data.imagePath === 'string' && data.imagePath.length > 0) {
       const patch: Partial<XiaoConfig> = { backgroundImagePath: data.imagePath };
-      // Host 已自动识别是否为动态 GIF：GIF 动图 => dynamic=true；静态图/单帧 GIF => false。
+      // Host 已自动识别是否为动态背景：动画 GIF / 视频 => dynamic=true；静态图/单帧 GIF => false。
       if (typeof data.dynamic === 'boolean') patch.backgroundDynamic = data.dynamic;
       await saveConfig(store, patch);
-      return true;
+      return null;
     }
+    return 'HTTP ' + response.status;
   } catch (error) {
     console.error('[xiao-theme] upload failed:', error);
+    return error instanceof Error && error.message ? error.message : 'Upload failed';
   }
-  return false;
 }
 
-/** 上传头像图到 Host，成功后把返回的路径写入配置（头像无“动态背景”概念，只取 imagePath）。 */
-async function uploadAvatar(store: ConfigStore, file: File): Promise<boolean> {
+/** 上传头像图到 Host，成功后把返回的路径写入配置（头像无“动态背景”概念，只取 imagePath）。返回 null=成功，否则返回错误信息。 */
+async function uploadAvatar(store: ConfigStore, file: File): Promise<string | null> {
   const match = /\.([a-zA-Z0-9]+)$/.exec(file.name || '');
   const ext = match ? match[1]!.toLowerCase() : 'png';
   try {
@@ -288,17 +306,18 @@ async function uploadAvatar(store: ConfigStore, file: File): Promise<boolean> {
     });
     if (!response.ok) {
       console.error('[xiao-theme] avatar upload failed:', response.status);
-      return false;
+      return await errorText(response);
     }
     const data = (await response.json()) as { imagePath?: unknown };
     if (data && typeof data.imagePath === 'string' && data.imagePath.length > 0) {
       await saveConfig(store, { avatarPath: data.imagePath });
-      return true;
+      return null;
     }
+    return 'HTTP ' + response.status;
   } catch (error) {
     console.error('[xiao-theme] avatar upload failed:', error);
+    return error instanceof Error && error.message ? error.message : 'Upload failed';
   }
-  return false;
 }
 
 /** 通用 JSON fetch：非 2xx 抛出带 error 文本的异常。 */
@@ -432,6 +451,85 @@ function findFrameElement(): HTMLElement | null {
   return (document.querySelector('#root > div') as HTMLElement | null) || null;
 }
 
+/** 判断背景路径是否为视频（mp4/webm/mov/m4v）：视频背景即动态背景，用 <video> 元素渲染。 */
+function isVideoPath(pathValue: string): boolean {
+  return /\.(mp4|webm|mov|m4v)$/i.test(pathValue || '');
+}
+
+/** 视频背景的首个用户交互时恢复声音的清理句柄（避免重复挂监听/泄漏）。 */
+let bgVideoGestureCleanup: (() => void) | null = null;
+
+/** 移除视频背景 <video> 元素并清理声音恢复监听。 */
+function removeBgVideo(): void {
+  const v = document.getElementById('xiao-theme-video') as HTMLVideoElement | null;
+  if (v) {
+    v.pause();
+    v.remove();
+  }
+  if (bgVideoGestureCleanup) {
+    bgVideoGestureCleanup();
+    bgVideoGestureCleanup = null;
+  }
+}
+
+/** 创建/更新视频背景 <video> 元素：铺满、循环、可选声音（默认静音以允许自动播放）。 */
+function syncBgVideo(cfg: XiaoConfig, active: boolean): void {
+  let v = document.getElementById('xiao-theme-video') as HTMLVideoElement | null;
+  if (!active) {
+    removeBgVideo();
+    return;
+  }
+  if (!v) {
+    v = document.createElement('video');
+    v.id = 'xiao-theme-video';
+    v.dataset.plugin = 'xiao-theme-ts';
+    v.autoplay = true;
+    v.loop = true;
+    v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.style.position = 'fixed';
+    v.style.inset = '0';
+    v.style.width = '100%';
+    v.style.height = '100%';
+    v.style.objectFit = 'cover';
+    v.style.zIndex = '-1';
+    v.style.pointerEvents = 'none';
+    document.body.appendChild(v);
+  }
+  const src = '/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '&v=' + bgVersion;
+  if (v.dataset.src !== src) {
+    v.dataset.src = src;
+    v.src = src;
+  }
+  const wantMuted = cfg.backgroundVideoAudio !== true;
+  if (v.muted !== wantMuted) v.muted = wantMuted;
+  const p = v.play();
+  if (p && typeof p.catch === 'function') {
+    p.catch(() => {
+      // 自动播放带声音可能被浏览器拦截：先静音循环显示背景，等用户首次交互后再恢复声音。
+      if (!v || document.getElementById('xiao-theme-video') !== v) return;
+      if (!wantMuted && !bgVideoGestureCleanup) {
+        if (v.muted === false) v.muted = true;
+        void v.play().catch(() => {});
+        const onGesture = (): void => {
+          v!.muted = false;
+          void v!.play().catch(() => {});
+          if (bgVideoGestureCleanup) {
+            bgVideoGestureCleanup();
+            bgVideoGestureCleanup = null;
+          }
+        };
+        bgVideoGestureCleanup = () => {
+          window.removeEventListener('pointerdown', onGesture, true);
+          window.removeEventListener('keydown', onGesture, true);
+        };
+        window.addEventListener('pointerdown', onGesture, true);
+        window.addEventListener('keydown', onGesture, true);
+      }
+    });
+  }
+}
+
 /**
  * 按配置应用 / 更新 / 移除整页磨砂背景。
  * 背景图铺在 body 上（一定可见），根框架强制半透明并加 backdrop-filter 模糊，
@@ -440,10 +538,13 @@ function findFrameElement(): HTMLElement | null {
 function syncBackground(cfg: XiaoConfig): void {
   const de = document.documentElement;
   const on = cfg.enabled !== false && cfg.backgroundEnabled !== false;
+  const isVideoBg = cfg.backgroundDynamic === true && isVideoPath(cfg.backgroundImagePath || '');
   const frame = findFrameElement();
   if (!on) {
     de.classList.remove('xiao-bg-on');
     de.classList.remove('xiao-bg-dynamic');
+    de.classList.remove('xiao-bg-video');
+    removeBgVideo();
     de.style.removeProperty('--xiao-bg-img');
     de.style.removeProperty('--xiao-bg-blur');
     de.style.removeProperty('--xiao-bg-ovl');
@@ -473,10 +574,16 @@ function syncBackground(cfg: XiaoConfig): void {
   const [dr, dg, db] = surf.dark;
   const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
   de.classList.add('xiao-bg-on');
-  // 动态背景（GIF 动图）：以动画形式铺满；静态背景维持原有「URL+渐变」磨砂处理。
+  // 动态背景：GIF 动图走 CSS background-image；视频走 <video> 元素（CSS 背景无法渲染视频）。
   de.classList.toggle('xiao-bg-dynamic', cfg.backgroundDynamic === true);
+  de.classList.toggle('xiao-bg-video', isVideoBg);
   // 追加背景路径作为缓存指纹：背景图一变化 URL 就变，浏览器立即重新拉取，无需手动刷新页面。
-  de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '&v=' + bgVersion + '")');
+  // 注意：视频背景不能作为 CSS background-image，改用 <video> 元素渲染（见上方 syncBgVideo），故不设该变量。
+  if (isVideoBg) {
+    de.style.removeProperty('--xiao-bg-img');
+  } else {
+    de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '&v=' + bgVersion + '")');
+  }
   de.style.setProperty('--xiao-bg-blur', blur + 'px');
   // 背景渐变随主色：中段 = 主色，两端为同色暗/亮。
   de.style.setProperty('--xiao-theme-color', themeColor);
@@ -495,6 +602,8 @@ function syncBackground(cfg: XiaoConfig): void {
     frame.style.backdropFilter = 'blur(' + blur + 'px)';
     (frame.style as StyleWithWebkit).webkitBackdropFilter = 'blur(' + blur + 'px)';
   }
+  // 视频背景：创建/更新 <video> 元素（铺满 + 循环 + 声音开关）。
+  syncBgVideo(cfg, isVideoBg);
   // 强制重绘：背景挂在 background-attachment:fixed 下时，仅改 CSS 变量在某些浏览器不会刷新背景图层
   //（表现为必须整页刷新才生效）。这里显式移除再重加 xiao-bg-on 并触发一次重排，迫使浏览器重新取回并绘制新背景。
   de.classList.remove('xiao-bg-on');
@@ -1092,6 +1201,8 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
 function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
+  const [bgUploadError, setBgUploadError] = React.useState<string | null>(null);
+  const [avatarUploadError, setAvatarUploadError] = React.useState<string | null>(null);
   const cfg = snapshot;
   const enabled = cfg.enabled !== false;
   const voiceEnabled = cfg.voiceEnabled !== false;
@@ -1100,6 +1211,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
   const voicePrompt = cfg.voicePrompt || '';
   const bgEnabled = cfg.backgroundEnabled !== false;
   const bgPath = cfg.backgroundImagePath || CLIENT_DEFAULT_CONFIG.backgroundImagePath;
+  // 当前背景是否为视频（在下方显示「视频背景声音」开关；仅视频背景可播声音）。
+  const isVideoBg = cfg.backgroundDynamic === true && isVideoPath(bgPath);
   const themeColor =
     typeof cfg.themeColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(cfg.themeColor)
       ? cfg.themeColor
@@ -1108,12 +1221,14 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
-    if (file) void uploadBackground(store, file);
+    setBgUploadError(null);
+    if (file) void uploadBackground(store, file).then((err) => setBgUploadError(err));
   };
   const onPickAvatarFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
-    if (file) void uploadAvatar(store, file);
+    setAvatarUploadError(null);
+    if (file) void uploadAvatar(store, file).then((err) => setAvatarUploadError(err));
   };
 
   return React.createElement(
@@ -1251,6 +1366,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
           onChange: onPickAvatarFile,
         }),
       ),
+      avatarUploadError &&
+        React.createElement('div', { className: 'xiao-settings-warn' }, avatarUploadError),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
@@ -1310,9 +1427,9 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
           onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
             const next = e.target.value.trim();
             if (next.length > 0) {
-              // GIF 即动图：手动填 .gif 路径时自动视为动态背景；其余按静态背景。
-              const isGif = /\.gif$/i.test(next);
-              void saveConfig(store, { backgroundImagePath: next, backgroundDynamic: isGif });
+              // GIF/视频即动态背景：手动填 .gif/.mp4/.webm/.mov/.m4v 路径时自动视为动态背景；其余按静态背景。
+              const isDynamic = /\.(gif|mp4|webm|mov|m4v)$/i.test(next);
+              void saveConfig(store, { backgroundImagePath: next, backgroundDynamic: isDynamic });
             }
           },
         }),
@@ -1324,10 +1441,25 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         React.createElement('input', {
           className: 'xiao-settings-file',
           type: 'file',
-          accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml',
+          accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/webm',
           onChange: onPickFile,
         }),
       ),
+      bgUploadError &&
+        React.createElement('div', { className: 'xiao-settings-warn' }, bgUploadError),
+      isVideoBg &&
+        React.createElement(
+          'div',
+          { className: 'xiao-settings-row' },
+          React.createElement('label', { className: 'xiao-settings-label' }, t('videoAudio')),
+          React.createElement('input', {
+            type: 'checkbox',
+            checked: cfg.backgroundVideoAudio === true,
+            onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+              void saveConfig(store, { backgroundVideoAudio: e.target.checked });
+            },
+          }),
+        ),
       React.createElement(RangeRow, {
         label: t('blurStrength'),
         value: clampNum(cfg.backgroundBlur, CLIENT_RANGES.backgroundBlur.min, CLIENT_RANGES.backgroundBlur.max, 22),
@@ -1411,6 +1543,8 @@ const XIAO_CSS: string[] = [
   'html.xiao-bg-on body{background-image:var(--xiao-bg-img),linear-gradient(135deg,var(--xiao-grad-a),var(--xiao-theme-color) 55%,var(--xiao-grad-b))!important;background-color:transparent!important;background-attachment:fixed!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important;}',
   // 动态背景（GIF 动图）：覆盖为纯动图（去掉渐变着色），让动画按原色铺满并随页面播放；static 维持上方「URL+渐变」磨砂处理。
   'html.xiao-bg-on.xiao-bg-dynamic body{background-image:var(--xiao-bg-img)!important;}',
+  // 视频背景：body 背景图置空，仅留 <video> 元素（fixed 垫底）作为视觉层；磨砂层仍由 #root>div 透出并模糊。
+  'html.xiao-bg-on.xiao-bg-video body{background-image:none!important;}',
   'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
   'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
   // 左右侧栏独立底色：用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
@@ -1511,6 +1645,8 @@ function apply(ctx: ClientCtx): void {
       const de = document.documentElement;
       de.classList.remove('xiao-bg-on');
       de.classList.remove('xiao-bg-dynamic');
+      de.classList.remove('xiao-bg-video');
+      removeBgVideo();
       de.style.removeProperty('--xiao-bg-img');
       de.style.removeProperty('--xiao-bg-blur');
       de.style.removeProperty('--xiao-bg-ovl');

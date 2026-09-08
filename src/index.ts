@@ -5,7 +5,8 @@
  *
  * TypeScript 实现：逻辑与 xiao-ui-theme 保持一致，但界面经 `host.types` 强类型约束，编译期即可暴露接口笔误。
  */
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, unlink, stat } from 'node:fs/promises';
+import { createWriteStream, createReadStream } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,9 @@ import type { HostCtx, WebRouteHandler } from './host.types';
 const CONFIG_PATH = join(homedir(), '.dsh', 'xiao-theme.json');
 const UPLOAD_DIR = join(homedir(), '.dsh', 'xiao-theme-uploads');
 const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url)); // 插件根目录（lib 的上一级）
-const MAX_UPLOAD = 20 * 1024 * 1024;
+const MAX_UPLOAD_AVATAR = 20 * 1024 * 1024; // 头像/图片保持原上限（<img>，无需大文件）
+const MAX_UPLOAD_BG = 200 * 1024 * 1024; // 背景（含视频）放宽：流式落盘后内存不再是瓶颈
+const UPLOAD_HEADER_BYTES = 16; // 流式时抓取的前 16 字节用于视频容器签名校验
 
 // Host 半保持自包含：运行时不依赖相对模块，以下默认值与范围常量以 `XiaoConfig` 类型约束（与 src/config.ts 保持一致）。
 const HOST_DEFAULT_CONFIG: XiaoConfig = {
@@ -29,6 +32,7 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   backgroundEnabled: true,
   backgroundImagePath: 'resource/avatar.png',
   backgroundDynamic: false,
+  backgroundVideoAudio: false,
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
@@ -70,6 +74,10 @@ const MIME_BY_EXT: Record<string, string> = {
   '.webp': 'image/webp',
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
 };
 
 /** 把任意配置对象规范化为合法 XiaoConfig（逐字段校验 + 兜底；含旧字段迁移 backgroundOpacity/… -> panelOpacity）。 */
@@ -98,6 +106,7 @@ function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
         ? parsed.backgroundImagePath
         : HOST_DEFAULT_CONFIG.backgroundImagePath,
     backgroundDynamic: parsed.backgroundDynamic === true,
+    backgroundVideoAudio: parsed.backgroundVideoAudio === true,
     backgroundBlur: clamp(
       parsed.backgroundBlur,
       HOST_RANGES.backgroundBlur.min,
@@ -240,23 +249,84 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
-/** 读取原始二进制请求体（用于图片上传），限制大小。 */
-function readRawBody(req: IncomingMessage): Promise<Buffer> {
+/**
+ * 把请求体流式写盘（不整块驻留内存），限制大小，并抓取文件头若干字节供容器校验。
+ * 处理背压（写盘慢时暂停接收）、大小上限（超限中断）、错误与客户端中断（清理半成品文件）。
+ * 成功 resolve { size, header }；失败 reject（调用方负责清理）。
+ */
+function streamUpload(
+  req: IncomingMessage,
+  filePath: string,
+  maxBytes: number,
+): Promise<{ size: number; header: Buffer }> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
+    const ws = createWriteStream(filePath);
     let size = 0;
-    req.on('data', (chunk) => {
+    let header = Buffer.alloc(0);
+    let settled = false;
+    const cleanup = (): void => {
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+      req.removeListener('aborted', onError);
+      ws.removeListener('error', onError);
+      ws.removeListener('close', onClose);
+    };
+    const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      ws.destroy();
+      void unlink(filePath).catch(() => {});
+      reject(err);
+    };
+    const succeed = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ size, header });
+    };
+    const onData = (chunk: Buffer): void => {
       size += chunk.length;
-      if (size > MAX_UPLOAD) {
+      if (header.length < UPLOAD_HEADER_BYTES) {
+        const need = UPLOAD_HEADER_BYTES - header.length;
+        header = Buffer.concat([header, chunk.subarray(0, Math.min(need, chunk.length))]);
+      }
+      if (size > maxBytes) {
         req.destroy();
-        reject(new Error('file too large (max 20MB)'));
+        fail(new Error('file too large (max ' + maxBytes + ')'));
         return;
       }
-      chunks.push(Buffer.from(chunk));
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+      if (!ws.write(chunk)) {
+        req.pause();
+        ws.once('drain', () => req.resume());
+      }
+    };
+    const onEnd = (): void => {
+      ws.end(succeed);
+    };
+    const onError = (err: Error): void => fail(err instanceof Error ? err : new Error('upload aborted'));
+    const onClose = (): void => fail(new Error('upload aborted'));
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+    req.on('aborted', onError);
+    ws.on('error', onError);
+    ws.on('close', onClose);
   });
+}
+
+/** 校验视频容器签名与扩展名是否匹配（防止把 .mkv 改名成 .mp4 等）。仅校验视频；图片保持宽松。 */
+function videoFormatMatches(ext: string, header: Buffer): boolean {
+  if (header.length < 12) return false;
+  if (/^\.mp4$/i.test(ext)) return header.toString('latin1', 4, 8) === 'ftyp';
+  if (/^\.mov$/i.test(ext) || /^\.m4v$/i.test(ext)) {
+    return header.toString('latin1', 4, 8) === 'ftyp' || header.indexOf('moov') >= 0;
+  }
+  if (/^\.webm$/i.test(ext)) {
+    return header[0] === 0x1a && header[1] === 0x45 && header[2] === 0xdf && header[3] === 0xa3;
+  }
+  return false;
 }
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
@@ -276,14 +346,27 @@ const HOST_ERR = {
   defaultNotDeletable: { zh: '默认主题不可删除', en: 'The default theme cannot be deleted' },
   configRequired: { zh: '导入数据缺少 config', en: 'Import data is missing config' },
   emptyUpload: { zh: '上传内容为空', en: 'Empty upload' },
-  fileTooLarge: { zh: '文件过大（最大 20MB）', en: 'File too large (max 20MB)' },
+  fileTooLarge: { zh: '文件过大', en: 'File too large' },
+  unsupportedFormat: {
+    zh: '不支持的文件格式（背景支持 png/jpg/webp/gif/svg/mp4/webm/mov/m4v；头像支持 png/jpg/webp/gif/svg）',
+    en: 'Unsupported file format (bg: png/jpg/webp/gif/svg/mp4/webm/mov/m4v; avatar: png/jpg/webp/gif/svg)',
+  },
+  formatMismatch: { zh: '文件格式与扩展名不匹配', en: 'File format does not match its extension' },
+  uploadAborted: { zh: '上传已中断', en: 'Upload aborted' },
 } as const;
 
 /** 抛出型错误：已知的转成对应语言文案（如文件过大），系统错误原样保留。 */
 function requestError(req: IncomingMessage, error: unknown): string {
   const lang = langFromReq(req);
   const msg = error instanceof Error ? error.message : String(error);
-  if (msg === 'file too large (max 20MB)') return HOST_ERR.fileTooLarge[lang];
+  const sizeMatch = /file too large \(max (\d+)\)/.exec(msg);
+  if (sizeMatch) {
+    const mb = Math.max(1, Math.round(Number(sizeMatch[1]) / (1024 * 1024)));
+    return lang === 'zh' ? `文件过大（最大 ${mb}MB）` : `File too large (max ${mb}MB)`;
+  }
+  if (msg === 'unsupported format') return HOST_ERR.unsupportedFormat[lang];
+  if (msg === 'format mismatch') return HOST_ERR.formatMismatch[lang];
+  if (msg === 'upload aborted') return HOST_ERR.uploadAborted[lang];
   return msg;
 }
 
@@ -301,6 +384,30 @@ function contentTypeFor(pathValue: string): string {
   const match = /\.([a-z0-9]+)$/i.exec(pathValue);
   const ext = '.' + (match ? match[1]!.toLowerCase() : '');
   return MIME_BY_EXT[ext] || 'application/octet-stream';
+}
+
+/** 解析 HTTP Range 头（bytes=start-end / bytes=start- / bytes=-suffix）；非法或不可满足返回 null（按完整文件返回）。 */
+function parseRange(range: string | undefined, size: number): { start: number; end: number } | null {
+  if (!range || size <= 0) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (!m) return null;
+  const startRaw = m[1]!;
+  const endRaw = m[2]!;
+  let start: number;
+  let end: number;
+  if (startRaw === '') {
+    // 后缀范围 bytes=-N：最后 N 字节
+    const n = Number(endRaw);
+    if (!Number.isFinite(n) || n === 0) return null;
+    start = Math.max(size - n, 0);
+    end = size - 1;
+  } else {
+    start = Number(startRaw);
+    end = endRaw === '' ? size - 1 : Number(endRaw);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  }
+  if (start < 0 || start > end || start >= size) return null;
+  return { start, end: Math.min(end, size - 1) };
 }
 
 /** 魈式语气提示文本（中文模板）。 */
@@ -356,6 +463,10 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
       typeof body.backgroundDynamic === 'boolean'
         ? body.backgroundDynamic
         : current.backgroundDynamic,
+    backgroundVideoAudio:
+      typeof body.backgroundVideoAudio === 'boolean'
+        ? body.backgroundVideoAudio
+        : current.backgroundVideoAudio,
     backgroundBlur:
       clampNum(body.backgroundBlur, HOST_RANGES.backgroundBlur.min, HOST_RANGES.backgroundBlur.max) ??
       current.backgroundBlur,
@@ -380,19 +491,28 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
   };
 }
 
-/** 解析上传扩展名：优先 header `x-xiao-ext`，其次 query `?ext=`，最后 `.png`。 */
-function resolveUploadExt(req: IncomingMessage): string {
-  let ext = '.png';
+/** 背景上传允许的视频扩展名（头像上传仅允许图片，<img> 无法渲染视频）。 */
+function allowedUploadExt(allowVideo: boolean): RegExp {
+  return allowVideo
+    ? /^\.(png|jpe?g|webp|gif|svg|mp4|webm|mov|m4v)$/
+    : /^\.(png|jpe?g|webp|gif|svg)$/;
+}
+
+/** 读取客户端声明的上传扩展名（优先 query `?ext=`，其次 header `x-xiao-ext`）；未给则返回空串。 */
+function requestedUploadExt(req: IncomingMessage): string {
+  const norm = (raw: string): string => {
+    const v = raw.toLowerCase().trim();
+    if (v === '') return '';
+    return v.startsWith('.') ? v : '.' + v;
+  };
   try {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const queryExt = (url.searchParams.get('ext') || '').toLowerCase();
-    if (/^\.(png|jpe?g|webp|gif|svg)$/.test(queryExt)) ext = queryExt.replace('jpeg', 'jpg');
+    const q = norm(url.searchParams.get('ext') || '');
+    if (q !== '') return q;
   } catch {
     /* 忽略非法 URL */
   }
-  const headerExt = String(req.headers['x-xiao-ext'] || '').toLowerCase();
-  if (/^\.(png|jpe?g|webp|gif|svg)$/.test(headerExt)) ext = headerExt.replace('jpeg', 'jpg');
-  return ext;
+  return norm(String(req.headers['x-xiao-ext'] || ''));
 }
 
 /**
@@ -409,6 +529,11 @@ function isAnimatedGif(buf: Buffer): boolean {
     if (gce >= 2) return true;
   }
   return false;
+}
+
+/** 是否为视频扩展名（mp4/webm/mov/m4v）：视频背景一律视为动态背景。 */
+function isVideoExtension(ext: string): boolean {
+  return /^\.(mp4|webm|mov|m4v)$/i.test(ext || '');
 }
 
 /** 读取请求 query 参数（?name=xxx）。 */
@@ -551,7 +676,7 @@ export function apply(ctx: HostCtx): void {
         httpCtx.webServer.register({
           kind: 'exact',
           path: '/xiao-bg',
-          handler: async (_req, res) => {
+          handler: async (req, res) => {
             const config = await readConfig();
             if (!config.enabled || config.backgroundEnabled === false) {
               res.writeHead(404);
@@ -560,12 +685,28 @@ export function apply(ctx: HostCtx): void {
             }
             const filePath = resolveAssetPath(config.backgroundImagePath);
             try {
-              const body = await readFile(filePath);
-              res.writeHead(200, {
-                'content-type': contentTypeFor(filePath),
-                'cache-control': 'no-cache',
-              });
-              res.end(body);
+              const st = await stat(filePath);
+              // 视频/大文件支持 Range：浏览器可先播头部再流式续传、可拖动进度；不带 Range 时仍回完整文件（200）。
+              const range = parseRange(req.headers.range, st.size);
+              if (range) {
+                const { start, end } = range;
+                res.writeHead(206, {
+                  'content-type': contentTypeFor(filePath),
+                  'content-length': end - start + 1,
+                  'content-range': 'bytes ' + start + '-' + end + '/' + st.size,
+                  'accept-ranges': 'bytes',
+                  'cache-control': 'no-cache',
+                });
+                createReadStream(filePath, { start, end }).on('error', () => res.destroy()).pipe(res);
+              } else {
+                res.writeHead(200, {
+                  'content-type': contentTypeFor(filePath),
+                  'content-length': st.size,
+                  'accept-ranges': 'bytes',
+                  'cache-control': 'no-cache',
+                });
+                createReadStream(filePath).on('error', () => res.destroy()).pipe(res);
+              }
             } catch {
               res.writeHead(404);
               res.end();
@@ -590,19 +731,53 @@ export function apply(ctx: HostCtx): void {
                 return;
               }
               try {
-                const ext = resolveUploadExt(request);
-                const body = await readRawBody(request);
-                if (body.length === 0) {
-                  sendJson(response, 400, { error: HOST_ERR.emptyUpload[langFromReq(request)] });
+                // kind 参数区分上传用途：背景图默认前缀 bg-；头像请求带 kind=avatar 用 avatar- 前缀。
+                const kind = queryParam(request, 'kind') === 'avatar' ? 'avatar' : 'bg';
+                const lang = langFromReq(request);
+                // 校验扩展名：未给则默认 .png（兼容）；显式给出但不属于允许集合 => 明确报「不支持的文件格式」。
+                const allowVideo = kind === 'bg';
+                const allowed = allowedUploadExt(allowVideo);
+                const requested = requestedUploadExt(request);
+                let ext: string;
+                if (requested === '') {
+                  ext = '.png';
+                } else if (allowed.test(requested)) {
+                  ext = requested.replace('jpeg', 'jpg');
+                } else {
+                  sendJson(response, 400, { error: HOST_ERR.unsupportedFormat[lang] });
+                  return;
+                }
+                // 头像仅允许图片：若头像请求声明的扩展名是视频，按不支持处理（<img> 无法渲染视频）。
+                if (!allowVideo && isVideoExtension(ext)) {
+                  sendJson(response, 400, { error: HOST_ERR.unsupportedFormat[lang] });
                   return;
                 }
                 await mkdir(UPLOAD_DIR, { recursive: true });
-                // kind 参数区分上传用途：背景图默认前缀 bg-；头像请求带 kind=avatar 用 avatar- 前缀。
-                const kind = queryParam(request, 'kind') === 'avatar' ? 'avatar' : 'bg';
                 const filePath = join(UPLOAD_DIR, `${kind}-${Date.now()}${ext}`);
-                await writeFile(filePath, body);
-                // 自动检测：是否为动态 GIF（多帧动画）。GIF 动图 => dynamic=true；静态图/单帧 GIF => false。
-                const dynamic = isAnimatedGif(body);
+                // 流式落盘：内存恒定，按 kind 分档上限（头像 20MB / 背景 200MB，含视频）。
+                const maxBytes = kind === 'avatar' ? MAX_UPLOAD_AVATAR : MAX_UPLOAD_BG;
+                const { size, header } = await streamUpload(request, filePath, maxBytes);
+                if (size === 0) {
+                  await unlink(filePath).catch(() => {});
+                  sendJson(response, 400, { error: HOST_ERR.emptyUpload[lang] });
+                  return;
+                }
+                // 视频容器签名校验：扩展名是视频但头不匹配（如把 .mkv 改名成 .mp4）=> 报「格式不匹配」。
+                if (kind === 'bg' && isVideoExtension(ext) && !videoFormatMatches(ext, header)) {
+                  await unlink(filePath).catch(() => {});
+                  sendJson(response, 400, { error: HOST_ERR.formatMismatch[lang] });
+                  return;
+                }
+                // 自动检测动态背景：视频 => true；动画 GIF => isAnimatedGif（从磁盘读取，GIF 体积小）；静态图/单帧 GIF => false。
+                let dynamic = false;
+                if (kind === 'bg') {
+                  if (isVideoExtension(ext)) {
+                    dynamic = true;
+                  } else if (/^\.gif$/i.test(ext)) {
+                    const gifBuf = await readFile(filePath);
+                    dynamic = isAnimatedGif(gifBuf);
+                  }
+                }
                 sendJson(response, 200, { imagePath: filePath.replace(/\\/g, '/'), dynamic });
               } catch (error) {
                 sendJson(response, 400, { error: requestError(request, error) });
