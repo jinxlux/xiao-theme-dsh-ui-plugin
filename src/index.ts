@@ -5,13 +5,14 @@
  *
  * TypeScript 实现：逻辑与 xiao-ui-theme 保持一致，但界面经 `host.types` 强类型约束，编译期即可暴露接口笔误。
  */
-import { readFile, writeFile, mkdir, unlink, stat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, unlink, stat, readdir } from 'node:fs/promises';
 import { createWriteStream, createReadStream } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { dirname, join, basename, extname, relative, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { VoiceLanguage, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport } from './config';
+import type { VoiceLanguage, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
 import type { HostCtx, WebRouteHandler } from './host.types';
 
 const CONFIG_PATH = join(homedir(), '.dsh', 'xiao-theme.json');
@@ -20,6 +21,7 @@ const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url)); // 插件根�
 const MAX_UPLOAD_AVATAR = 20 * 1024 * 1024; // 头像/图片保持原上限（<img>，无需大文件）
 const MAX_UPLOAD_BG = 200 * 1024 * 1024; // 背景（含视频）放宽：流式落盘后内存不再是瓶颈
 const UPLOAD_HEADER_BYTES = 16; // 流式时抓取的前 16 字节用于视频容器签名校验
+const GIF_SCAN_MAX = 20 * 1024 * 1024; // 超过此大小的 GIF 不再逐字节扫描（视为动态），避免读取超大单帧 GIF 卡死
 
 // Host 半保持自包含：运行时不依赖相对模块，以下默认值与范围常量以 `XiaoConfig` 类型约束（与 src/config.ts 保持一致）。
 const HOST_DEFAULT_CONFIG: XiaoConfig = {
@@ -546,6 +548,107 @@ function queryParam(req: IncomingMessage, name: string): string | null {
   }
 }
 
+/** 上传文件名里的用途前缀：bg- / avatar-。 */
+function uploadKindFromName(name: string): 'bg' | 'avatar' {
+  if (/^avatar-/i.test(name)) return 'avatar';
+  return 'bg';
+}
+
+/** 扫主题存储，统计每个上传 blob 被哪些主题引用（供 picker 展示 used-by / active）。 */
+function uploadUsedBy(store: ThemeStore): Map<string, { themes: string[]; active: boolean }> {
+  const map = new Map<string, { themes: string[]; active: boolean }>();
+  for (const [id, entry] of Object.entries(store.themes)) {
+    const isActive = id === store.activeThemeId;
+    const push = (pathValue: string | undefined): void => {
+      if (typeof pathValue !== 'string' || pathValue.length === 0) return;
+      const abs = resolveAssetPath(pathValue);
+      const rel = relative(UPLOAD_DIR, abs);
+      // 只认真正落在上传目录内的引用（本地绝对路径 / 插件相对目录不在此列）。
+      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return;
+      const name = basename(abs);
+      const rec = map.get(name) || { themes: [], active: false };
+      if (rec.themes.indexOf(entry.name) < 0) rec.themes.push(entry.name);
+      if (isActive) rec.active = true;
+      map.set(name, rec);
+    };
+    push(entry.config.backgroundImagePath);
+    push(entry.config.avatarPath);
+  }
+  return map;
+}
+
+/** 从磁盘读取并判断是否为动图 GIF（读取失败按静态处理）。 */
+async function isAnimatedGifFile(filePath: string): Promise<boolean> {
+  try {
+    const buf = await readFile(filePath);
+    return isAnimatedGif(buf);
+  } catch {
+    return false;
+  }
+}
+
+/** 列出上传目录内的资产（可选按用途过滤），按 mtime 倒序。目录不存在/无文件返回空数组。 */
+async function listUploads(kindFilter?: 'bg' | 'avatar'): Promise<UploadEntry[]> {
+  let names: string[] = [];
+  try {
+    const dirents = await readdir(UPLOAD_DIR, { withFileTypes: true });
+    names = dirents.filter((d) => d.isFile()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const store = await readThemeStore();
+  const refs = uploadUsedBy(store);
+  const entries: UploadEntry[] = [];
+  for (const name of names) {
+    if (name.startsWith('.')) continue; // 跳过隐藏/元数据
+    const kind = uploadKindFromName(name);
+    if (kindFilter !== undefined && kind !== kindFilter) continue;
+    const filePath = join(UPLOAD_DIR, name);
+    let st;
+    try {
+      st = await stat(filePath);
+    } catch {
+      continue;
+    }
+    const ext = extname(name).toLowerCase() || '';
+    let isDynamic = false;
+    if (isVideoExtension(ext)) {
+      isDynamic = true;
+    } else if (ext === '.gif') {
+      // 超大 GIF 不再逐字节判断（视为动态），避免读超大单帧 GIF 卡死；否则按真实动画检测。
+      isDynamic = st.size > GIF_SCAN_MAX ? true : await isAnimatedGifFile(filePath);
+    }
+    const ref = refs.get(name);
+    entries.push({
+      name,
+      kind,
+      path: filePath.replace(/\\/g, '/'),
+      size: st.size,
+      mtime: st.mtimeMs,
+      ext,
+      isDynamic,
+      usedBy: ref ? ref.themes : [],
+      active: ref ? ref.active : false,
+    });
+  }
+  entries.sort((a, b) => b.mtime - a.mtime);
+  return entries;
+}
+
+/** 用系统文件管理器打开目录。成功返回 true（spawn 立即返回，不代表窗口一定已打开）。 */
+function openFolder(dir: string): boolean {
+  const cmd =
+    process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  try {
+    const child = spawn(cmd, [dir], { stdio: 'ignore', detached: true });
+    child.on('error', () => {});
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 生成唯一主题 id（时间戳 + 随机段）。 */
 function newThemeId(): string {
   return 'theme-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 0xffffff).toString(36);
@@ -787,6 +890,99 @@ export function apply(ctx: HostCtx): void {
           },
         }),
       'xiao-theme: upload route',
+    );
+
+    // —— 上传资产管理：列表 + 预览文件 + 打开文件夹（供客户端「选择器弹窗」）——
+    // 列出上传目录内的资产（可选 ?kind=bg|avatar 过滤），供选择器展示与复用。
+    httpCtx.effect(
+      () =>
+        httpCtx.webServer.register({
+          kind: 'exact',
+          path: '/xiao-theme/uploads',
+          handler: async (req, res) => {
+            if (req.method !== 'GET' && req.method !== 'HEAD') {
+              res.writeHead(405);
+              res.end();
+              return;
+            }
+            const kindParam = queryParam(req, 'kind');
+            const kindFilter = kindParam === 'avatar' ? 'avatar' : kindParam === 'bg' ? 'bg' : undefined;
+            const payload: UploadListResponse = { uploads: await listUploads(kindFilter) };
+            sendJson(res, 200, payload);
+          },
+        }),
+      'xiao-theme: upload list route',
+    );
+
+    // 上传文件预览：按名字读取某个已上传 blob（不受 enabled / 背景开关限制），带 Range（视频拖动）。
+    httpCtx.effect(
+      () =>
+        httpCtx.webServer.register({
+          kind: 'exact',
+          path: '/xiao-theme/uploads-file',
+          handler: async (req, res) => {
+            const name = queryParam(req, 'name') || '';
+            const safeBase = basename(name);
+            // 只允许纯文件名（无路径分隔 / .. / 空），杜绝路径穿越：basename 归一化后与原名不同即带路径成分。
+            if (safeBase === '' || safeBase === '.' || safeBase === '..' || safeBase !== name) {
+              res.writeHead(400);
+              res.end();
+              return;
+            }
+            const filePath = join(UPLOAD_DIR, safeBase);
+            try {
+              const st = await stat(filePath);
+              const range = parseRange(req.headers.range, st.size);
+              if (range) {
+                const { start, end } = range;
+                res.writeHead(206, {
+                  'content-type': contentTypeFor(filePath),
+                  'content-length': end - start + 1,
+                  'content-range': 'bytes ' + start + '-' + end + '/' + st.size,
+                  'accept-ranges': 'bytes',
+                  'cache-control': 'no-cache',
+                });
+                createReadStream(filePath, { start, end }).on('error', () => res.destroy()).pipe(res);
+              } else {
+                res.writeHead(200, {
+                  'content-type': contentTypeFor(filePath),
+                  'content-length': st.size,
+                  'accept-ranges': 'bytes',
+                  'cache-control': 'no-cache',
+                });
+                createReadStream(filePath).on('error', () => res.destroy()).pipe(res);
+              }
+            } catch {
+              res.writeHead(404);
+              res.end();
+            }
+          },
+        }),
+      'xiao-theme: upload file route',
+    );
+
+    // 用系统文件管理器打开上传目录（本机动作；失败时返回 ok=false + path 供用户手动前往）。
+    httpCtx.effect(
+      () =>
+        httpCtx.webServer.register({
+          kind: 'exact',
+          path: '/xiao-theme/open-uploads',
+          handler: async (req, res) => {
+            if (req.method !== 'POST') {
+              res.writeHead(405);
+              res.end();
+              return;
+            }
+            try {
+              await mkdir(UPLOAD_DIR, { recursive: true });
+              const ok = openFolder(UPLOAD_DIR);
+              sendJson(res, 200, { ok, path: UPLOAD_DIR.replace(/\\/g, '/') });
+            } catch {
+              sendJson(res, 200, { ok: false, path: UPLOAD_DIR.replace(/\\/g, '/') });
+            }
+          },
+        }),
+      'xiao-theme: open uploads folder route',
     );
 
     // —— 主题管理 API：列出 / 新建 / 切换 / 重命名 / 删除 / 导出 / 导入 ——
