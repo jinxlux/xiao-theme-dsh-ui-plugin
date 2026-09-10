@@ -79,3 +79,30 @@ export interface ThemeExport {
   name: string;
   config: XiaoConfig;
 }
+
+/** 上传目录里的一条资产（背景图/头像，供上传选择器列出与复用）。 */
+export interface UploadEntry {
+  /** 目录内文件名（如 bg-1700000000000.png）。 */
+  name: string;
+  /** 用途：背景图 / 头像（按文件名前缀 bg- / avatar- 推断）。 */
+  kind: 'bg' | 'avatar';
+  /** 绝对路径（/ 分隔，可直接写入背景/头像配置）。 */
+  path: string;
+  /** 字节数。 */
+  size: number;
+  /** 最后修改时间（ms）。 */
+  mtime: number;
+  /** 扩展名（.png / .gif / .mp4 …）。 */
+  ext: string;
+  /** 是否为动态背景（动画 GIF / 视频）：视频或动画 GIF 为 true，静态图/单帧 GIF 为 false。 */
+  isDynamic: boolean;
+  /** 引用此资产的活主题名列表（save-as-new 会让多个主题指向同一份）。 */
+  usedBy: string[];
+  /** 是否被当前活动主题引用。 */
+  active: boolean;
+}
+
+/** GET /xiao-theme/uploads 的响应：上传资产列表（按 mtime 倒序）。 */
+export interface UploadListResponse {
+  uploads: UploadEntry[];
+}

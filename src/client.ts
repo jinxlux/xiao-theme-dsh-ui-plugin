@@ -7,7 +7,7 @@
  * 构建时由 tsc 产出 ModuleLoader 兼容的 CommonJS，再由 scripts/wrap-client.mjs 包裹。
  */
 import * as React from 'react';
-import type { XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport } from './config';
+import type { XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
 import type { ClientCtx, ClientPlugin, ThemeTokenValue } from './client.types';
 
 /**
@@ -63,6 +63,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   customPrompt: { zh: '自定义提示词', en: 'Custom prompt' },
   promptPlaceholder: { zh: '留空则使用所选语言的默认模板；填写后优先使用自定义文本。', en: 'Leave empty to use the default template of the selected language; a custom prompt is used when set.' },
   restorePrompt: { zh: '恢复提示词默认', en: 'Reset prompt' },
+  restoreThemeColor: { zh: '恢复主题颜色默认', en: 'Reset theme color' },
+  restoreMascot: { zh: '恢复吉祥物默认', en: 'Reset mascot' },
   mascotSection: { zh: '吉祥物', en: 'Mascot' },
   avatarPath: { zh: '头像图片路径', en: 'Avatar image path' },
   titleField: { zh: '标题', en: 'Title' },
@@ -70,8 +72,21 @@ const STR: Record<string, { zh: string; en: string }> = {
   bgSection: { zh: '磨砂背景', en: 'Frosted background' },
   enableBg: { zh: '启用磨砂背景', en: 'Enable frosted background' },
   bgPath: { zh: '背景图路径', en: 'Background image path' },
-  uploadBg: { zh: '上传背景图', en: 'Upload background image' },
-  uploadAvatar: { zh: '上传头像', en: 'Upload avatar' },
+  uploadBg: { zh: '选择/上传背景图', en: 'Choose/upload background' },
+  uploadAvatar: { zh: '选择/上传头像', en: 'Choose/upload avatar' },
+  uploadsTitle: { zh: '管理上传文件', en: 'Manage uploads' },
+  uploadsEmpty: { zh: '还没有上传文件。点下方「上传」即可新增，或打开文件夹放入文件后刷新。', en: 'No uploaded files yet. Tap "Upload" below to add one, or open the folder to drop files then refresh.' },
+  uploadsUse: { zh: '使用此文件', en: 'Use this file' },
+  uploadsOpenFolder: { zh: '打开上传文件夹', en: 'Open upload folder' },
+  uploadsClose: { zh: '关闭', en: 'Close' },
+  uploadsCurrent: { zh: '当前使用', en: 'In use' },
+  uploadsUsedBy: { zh: '用于', en: 'Used by' },
+  uploadsFetchError: { zh: '读取上传列表失败', en: 'Failed to load uploads' },
+  uploadsUpload: { zh: '上传', en: 'Upload' },
+  uploadsUploading: { zh: '上传中…', en: 'Uploading…' },
+  uploadsUploadFailed: { zh: '上传失败', en: 'Upload failed' },
+  uploadsFolderOpened: { zh: '已尝试打开上传文件夹', en: 'Attempted to open the upload folder' },
+  uploadsFolderFailed: { zh: '打开失败，请手动前往此目录', en: 'Failed to open. Go to the folder manually:' },
   blurStrength: { zh: '磨砂强度', en: 'Blur strength' },
   uiOpacity: { zh: '界面不透明度', en: 'UI opacity' },
   sidebarOpacity: { zh: '侧栏不透明度', en: 'Sidebar opacity' },
@@ -416,6 +431,12 @@ function buildTokens(cfg: XiaoConfig): Record<string, ThemeTokenValue> {
       light: rgba(lr, lg, lb, Math.max(light - 0.1, 0.2)),
       dark: rgba(dr, dg, db, Math.max(dark - 0.1, 0.2)),
     };
+    // layer-3 原先是本主题的缺口（DSH 默认是不透明的静态中性色），better-sidebar 的卡片/标签条会用到它，
+    // 不补的话右栏内部会留下一块「不跟主题、也不跟不透明度」的实色。透度取 1/2 之间（DSH 原层级顺序）。
+    tokens['--dsw-alias-bg-layer-3'] = {
+      light: rgba(lr, lg, lb, Math.max(light - 0.08, 0.22)),
+      dark: rgba(dr, dg, db, Math.max(dark - 0.08, 0.22)),
+    };
     tokens['--dsw-alias-bg-overlay'] = {
       light: rgba(lr, lg, lb, Math.min(light + 0.12, PANEL_OPACITY_MAX)),
       dark: rgba(dr, dg, db, Math.min(dark + 0.12, PANEL_OPACITY_MAX)),
@@ -551,6 +572,12 @@ function syncBackground(cfg: XiaoConfig): void {
     de.style.removeProperty('--xiao-bg-ovl-dark');
     de.style.removeProperty('--xiao-sidebar-ovl');
     de.style.removeProperty('--xiao-sidebar-ovl-dark');
+    de.style.removeProperty('--xiao-sidebar-ovl-l1');
+    de.style.removeProperty('--xiao-sidebar-ovl-l2');
+    de.style.removeProperty('--xiao-sidebar-ovl-l3');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark-l1');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark-l2');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark-l3');
     de.style.removeProperty('--xiao-theme-color');
     de.style.removeProperty('--xiao-grad-a');
     de.style.removeProperty('--xiao-grad-b');
@@ -594,6 +621,15 @@ function syncBackground(cfg: XiaoConfig): void {
   // 侧栏杆：浅色/深色各一个变量，由 CSS 属性选择器套到 sidebarCol/detailsCol 上。
   de.style.setProperty('--xiao-sidebar-ovl', rgba(lr, lg, lb, so));
   de.style.setProperty('--xiao-sidebar-ovl-dark', rgba(dr, dg, db, so));
+  // 右栏面板内部的语义 token 覆盖值（见 XIAO_CSS 的 [data-sidebar-right-panel] 规则）：面板内的
+  // tab 条/卡片走 --dsw-alias-bg-layer-1/2/3，比面板底色略实一点，既保住内容可读性，又让整体
+  // 仍随侧栏不透明度单调变化（so=0 近全透、so=1 完全不透明）。不设 0.25 之类下限，否则拖到 0 也不透。
+  de.style.setProperty('--xiao-sidebar-ovl-l1', rgba(lr, lg, lb, Math.min(so + 0.04, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-l2', rgba(lr, lg, lb, Math.min(so + 0.08, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-l3', rgba(lr, lg, lb, Math.min(so + 0.06, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l1', rgba(dr, dg, db, Math.min(so + 0.04, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l2', rgba(dr, dg, db, Math.min(so + 0.08, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l3', rgba(dr, dg, db, Math.min(so + 0.06, 1)));
   // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
   if (frame) {
     const isDark = document.body.hasAttribute('data-ds-dark-theme');
@@ -1198,11 +1234,243 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
   );
 }
 /** 设置页组件：提示词（语言/自定义/恢复默认）+ 头像 + 磨砂背景（开关/路径/上传/参数）。 */
+/** 把字节数格式化为可读大小。 */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+/** 判断上传项是否为视频（用于缩略图渲染）：视频用 <video> 元素，其它用 <img>。 */
+function isUploadVideo(item: UploadEntry): boolean {
+  return item.isDynamic === true && /\.(mp4|webm|mov|m4v)$/i.test(item.ext || '');
+}
+
+/**
+ * 上传选择器弹窗：列出已上传的背景/头像，可选中复用（写入当前主题配置），也可在窗口内上传并自动选中。
+ * 提供「打开上传文件夹」让用户在系统文件管理器里直接增删改。全程不自动删除任何文件。
+ */
+function UploadPicker({
+  kind,
+  store,
+  onClose,
+}: {
+  kind: 'bg' | 'avatar';
+  store: ConfigStore;
+  onClose: () => void;
+}): React.ReactElement {
+  const [items, setItems] = React.useState<UploadEntry[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [selected, setSelected] = React.useState<string | null>(null);
+  const [uploading, setUploading] = React.useState<boolean>(false);
+  const [using, setUsing] = React.useState<boolean>(false);
+  const [opening, setOpening] = React.useState<boolean>(false);
+  const [folderHint, setFolderHint] = React.useState<string | null>(null);
+  const fileRef = React.useRef<HTMLInputElement | null>(null);
+
+  const accept =
+    kind === 'avatar'
+      ? 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml'
+      : 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/webm';
+  const configKey = kind === 'avatar' ? 'avatarPath' : 'backgroundImagePath';
+  const dynamicKey = kind === 'avatar' ? null : 'backgroundDynamic';
+
+  /** 从 Host 拉取上传列表；失败时设 error 并返回 []。 */
+  const loadList = React.useCallback(async (): Promise<UploadEntry[]> => {
+    try {
+      const response = await fetch('/xiao-theme/uploads?kind=' + kind, { cache: 'no-store', headers: xiaoLangHeader() });
+      if (!response.ok) {
+        setError('HTTP ' + response.status);
+        return [];
+      }
+      const data = (await response.json()) as UploadListResponse;
+      return data.uploads || [];
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return [];
+    }
+  }, [kind]);
+
+  /** 应用列表并保持选中态（选中项消失则回落第一个）。 */
+  const applyList = React.useCallback((list: UploadEntry[]): void => {
+    setItems(list);
+    setSelected((prev) => (prev && list.some((u) => u.name === prev) ? prev : list[0] ? list[0].name : null));
+  }, []);
+
+  const refresh = React.useCallback(async (): Promise<void> => {
+    setError(null);
+    applyList(await loadList());
+  }, [loadList, applyList]);
+
+  React.useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const thumbUrl = (item: UploadEntry): string =>
+    '/xiao-theme/uploads-file?name=' + encodeURIComponent(item.name) + '&v=' + item.mtime;
+
+  /** 选中并写回当前主题背景/头像配置。 */
+  const useSelected = async (): Promise<void> => {
+    const item = items && items.find((u) => u.name === selected);
+    if (!item || using) return;
+    setUsing(true);
+    try {
+      const patch: Partial<XiaoConfig> = { [configKey]: item.path };
+      if (kind === 'bg' && dynamicKey !== null) patch[dynamicKey] = item.isDynamic;
+      await saveConfig(store, patch);
+      onClose();
+    } finally {
+      setUsing(false);
+    }
+  };
+
+  /** 窗口内上传：成功后刷新列表 + 自动选中刚上传的文件。 */
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const err = kind === 'avatar' ? await uploadAvatar(store, file) : await uploadBackground(store, file);
+      if (err !== null) {
+        setError(t('uploadsUploadFailed') + ': ' + err);
+      } else {
+        const list = await loadList();
+        applyList(list);
+        const currentPath = store.getSnapshot()[configKey];
+        const match = list.find((u) => u.path === currentPath);
+        if (match) setSelected(match.name);
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onOpenFolder = async (): Promise<void> => {
+    setOpening(true);
+    try {
+      const response = await fetch('/xiao-theme/open-uploads', { method: 'POST', headers: xiaoLangHeader() });
+      const data = (await response.json()) as { ok?: boolean; path?: string };
+      if (data && data.ok) {
+        setFolderHint(t('uploadsFolderOpened'));
+      } else {
+        setFolderHint(t('uploadsFolderFailed') + ' ' + (data && data.path ? data.path : ''));
+      }
+    } catch {
+      setFolderHint(t('uploadsFolderFailed'));
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const listBody =
+    items === null
+      ? React.createElement('div', { className: 'xiao-upload-empty' }, t('uploadsFetchError'))
+      : items.length === 0
+        ? React.createElement('div', { className: 'xiao-upload-empty' }, t('uploadsEmpty'))
+        : React.createElement(
+            'div',
+            { className: 'xiao-upload-list' },
+            items.map((item) =>
+              React.createElement(
+                'div',
+                {
+                  className: 'xiao-upload-item' + (selected === item.name ? ' xiao-upload-item-sel' : ''),
+                  key: item.name,
+                  onClick: () => setSelected(item.name),
+                },
+                isUploadVideo(item)
+                  ? React.createElement('video', {
+                      className: 'xiao-upload-thumb',
+                      src: thumbUrl(item),
+                      muted: true,
+                      playsInline: true,
+                      preload: 'metadata',
+                    })
+                  : React.createElement('img', { className: 'xiao-upload-thumb', src: thumbUrl(item) }),
+                React.createElement(
+                  'div',
+                  { className: 'xiao-upload-info' },
+                  React.createElement('div', { className: 'xiao-upload-name' }, item.name),
+                  React.createElement('div', { className: 'xiao-upload-meta' }, formatFileSize(item.size) + ' · ' + (item.ext || '')),
+                  React.createElement(
+                    'div',
+                    { className: 'xiao-upload-ref' },
+                    item.active ? React.createElement('span', { className: 'xiao-upload-cur' }, t('uploadsCurrent')) : null,
+                    item.usedBy.length > 0 ? t('uploadsUsedBy') + ': ' + item.usedBy.join(', ') : null,
+                  ),
+                ),
+              ),
+            ),
+          );
+
+  return React.createElement(
+    'div',
+    { className: 'xiao-upload-modal' },
+    React.createElement(
+      'div',
+      { className: 'xiao-upload-panel' },
+      React.createElement('div', { className: 'xiao-upload-head' }, t('uploadsTitle')),
+      error ? React.createElement('div', { className: 'xiao-settings-warn' }, error) : null,
+      listBody,
+      folderHint ? React.createElement('div', { className: 'xiao-settings-hint' }, folderHint) : null,
+      React.createElement('input', {
+        ref: fileRef,
+        type: 'file',
+        accept,
+        style: { display: 'none' },
+        onChange: onUpload,
+      }),
+      React.createElement(
+        'div',
+        { className: 'xiao-upload-foot' },
+        React.createElement(
+          'button',
+          {
+            className: 'xiao-settings-btn',
+            type: 'button',
+            disabled: uploading,
+            onClick: () => {
+              if (fileRef.current) fileRef.current.click();
+            },
+          },
+          uploading ? t('uploadsUploading') : t('uploadsUpload'),
+        ),
+        React.createElement(
+          'button',
+          {
+            className: 'xiao-settings-btn',
+            type: 'button',
+            disabled: opening,
+            onClick: () => void onOpenFolder(),
+          },
+          t('uploadsOpenFolder'),
+        ),
+        React.createElement(
+          'button',
+          {
+            className: 'xiao-settings-btn',
+            type: 'button',
+            disabled: using || selected === null,
+            onClick: () => void useSelected(),
+          },
+          t('uploadsUse'),
+        ),
+        React.createElement(
+          'button',
+          { className: 'xiao-settings-btn', type: 'button', onClick: onClose },
+          t('uploadsClose'),
+        ),
+      ),
+    ),
+  );
+}
+
 function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
-  const [bgUploadError, setBgUploadError] = React.useState<string | null>(null);
-  const [avatarUploadError, setAvatarUploadError] = React.useState<string | null>(null);
+  const [pickerKind, setPickerKind] = React.useState<'bg' | 'avatar' | null>(null);
   const cfg = snapshot;
   const enabled = cfg.enabled !== false;
   const voiceEnabled = cfg.voiceEnabled !== false;
@@ -1217,19 +1485,6 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     typeof cfg.themeColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(cfg.themeColor)
       ? cfg.themeColor
       : DEFAULT_THEME_COLOR;
-
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    setBgUploadError(null);
-    if (file) void uploadBackground(store, file).then((err) => setBgUploadError(err));
-  };
-  const onPickAvatarFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    setAvatarUploadError(null);
-    if (file) void uploadAvatar(store, file).then((err) => setAvatarUploadError(err));
-  };
 
   return React.createElement(
     'div',
@@ -1264,6 +1519,15 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             void saveConfig(store, { themeColor: e.target.value });
           },
         }),
+        React.createElement(
+          'button',
+          {
+            className: 'xiao-settings-btn',
+            type: 'button',
+            onClick: () => void saveConfig(store, { themeColor: CLIENT_DEFAULT_CONFIG.themeColor }),
+          },
+          t('restoreThemeColor'),
+        ),
       ),
     ),
 
@@ -1358,16 +1622,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, t('uploadAvatar')),
-        React.createElement('input', {
-          className: 'xiao-settings-file',
-          type: 'file',
-          accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml',
-          onChange: onPickAvatarFile,
-        }),
+        React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => setPickerKind('avatar') }, t('uploadAvatar')),
       ),
-      avatarUploadError &&
-        React.createElement('div', { className: 'xiao-settings-warn' }, avatarUploadError),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
@@ -1395,6 +1651,24 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             void saveConfig(store, { mascotSubtitle: e.target.value });
           },
         }),
+      ),
+      React.createElement(
+        'div',
+        { className: 'xiao-settings-row' },
+        React.createElement(
+          'button',
+          {
+            className: 'xiao-settings-btn',
+            type: 'button',
+            onClick: () =>
+              void saveConfig(store, {
+                avatarPath: CLIENT_DEFAULT_CONFIG.avatarPath,
+                mascotTitle: CLIENT_DEFAULT_CONFIG.mascotTitle,
+                mascotSubtitle: CLIENT_DEFAULT_CONFIG.mascotSubtitle,
+              }),
+          },
+          t('restoreMascot'),
+        ),
       ),
     ),
 
@@ -1437,16 +1711,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, t('uploadBg')),
-        React.createElement('input', {
-          className: 'xiao-settings-file',
-          type: 'file',
-          accept: 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/webm',
-          onChange: onPickFile,
-        }),
+        React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => setPickerKind('bg') }, t('uploadBg')),
       ),
-      bgUploadError &&
-        React.createElement('div', { className: 'xiao-settings-warn' }, bgUploadError),
       isVideoBg &&
         React.createElement(
           'div',
@@ -1535,6 +1801,9 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       { className: 'xiao-settings-hint' },
       t('settingsHint'),
     ),
+    pickerKind !== null
+      ? React.createElement(UploadPicker, { kind: pickerKind, store, onClose: () => setPickerKind(null) })
+      : null,
   );
 }
 
@@ -1547,15 +1816,25 @@ const XIAO_CSS: string[] = [
   'html.xiao-bg-on.xiao-bg-video body{background-image:none!important;}',
   'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
   'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
-  // 左右侧栏独立底色：用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
+  // 左侧：DSH 自带侧栏，用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
+  // detailsCol 是 0.1.5 之前的右栏列名，保留仅供未升级 DSH 的用户；0.1.5-rc.1 起它已不存在。
   'html.xiao-bg-on [class$="sidebarCol"],[class$="detailsCol"]{background:var(--xiao-sidebar-ovl)!important;}',
   'html.xiao-bg-on body[data-ds-dark-theme] [class$="sidebarCol"],body[data-ds-dark-theme] [class$="detailsCol"]{background:var(--xiao-sidebar-ovl-dark)!important;}',
-  // 第三方 better-sidebar 右侧面板：全局 data 属性锚点（不依赖其哈希类名），跟随侧栏不透明度。
-  // 没装该插件时选择器匹配不到，天然无副作用、不会崩。
-  'html.xiao-bg-on [data-dsh-panel]{background:var(--xiao-sidebar-ovl)!important;}',
-  'html.xiao-bg-on [data-dsh-panel] [data-dsh-pane]{background:var(--xiao-sidebar-ovl)!important;}',
-  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]{background:var(--xiao-sidebar-ovl-dark)!important;}',
-  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel] [data-dsh-pane]{background:var(--xiao-sidebar-ovl-dark)!important;}',
+  // 右侧：现 DSH 原生右栏面板（dsh-client-ui-sidebar-right 的 .panel，稳定锚点 data-sidebar-right-panel）。
+  // better-sidebar ≥0.19 不再自绘右栏，而是把每个 tab 注册进这块原生面板（ctx.sidebarRight /
+  // sidebar.right.pane.tab），所以这一条同时覆盖「DSH 自带右栏」与「better-sidebar 的新右栏」。
+  // 除面板底色外，还在该子树内覆盖语义背景 token：better-sidebar 的 CSS 模块（tab 条、卡片、编辑器、
+  // 文件树…）大量消费 --dsw-alias-bg-layer-1/2/3，只改面板底色的话内部表面仍是不透明的。
+  // 浮窗层（data-sidebar-right-float-host）portal 到 body，不在此子树内，故不受影响。
+  'html.xiao-bg-on [data-sidebar-right-panel]{background:var(--xiao-sidebar-ovl)!important;--dsw-alias-bg-base:var(--xiao-sidebar-ovl);--dsw-alias-bg-layer-1:var(--xiao-sidebar-ovl-l1);--dsw-alias-bg-layer-2:var(--xiao-sidebar-ovl-l2);--dsw-alias-bg-layer-3:var(--xiao-sidebar-ovl-l3);}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-sidebar-right-panel]{background:var(--xiao-sidebar-ovl-dark)!important;--dsw-alias-bg-base:var(--xiao-sidebar-ovl-dark);--dsw-alias-bg-layer-1:var(--xiao-sidebar-ovl-dark-l1);--dsw-alias-bg-layer-2:var(--xiao-sidebar-ovl-dark-l2);--dsw-alias-bg-layer-3:var(--xiao-sidebar-ovl-dark-l3);}',
+  // 旧版 better-sidebar（<0.19）自绘的右侧面板：保留 data 属性锚点做向后兼容。
+  // ⚠️ 新版把 data-dsh-panel 挪到了「底部工作台面板」上（同一元素还带 data-dsh-bottom-panel），
+  // 用 :not() 把它摘掉——它压在对话区上，涂透会透出对话文字。没装该插件时匹配不到，天然无副作用。
+  'html.xiao-bg-on [data-dsh-panel]:not([data-dsh-bottom-panel]){background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on [data-dsh-panel]:not([data-dsh-bottom-panel]) [data-dsh-pane]{background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]:not([data-dsh-bottom-panel]){background:var(--xiao-sidebar-ovl-dark)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]:not([data-dsh-bottom-panel]) [data-dsh-pane]{background:var(--xiao-sidebar-ovl-dark)!important;}',
   '.xiao-mascot{position:fixed;right:18px;bottom:18px;z-index:2147483000;pointer-events:auto;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;}',
   '.xiao-badge{display:flex;align-items:center;gap:10px;padding:8px 12px 8px 10px;border-radius:999px;background:linear-gradient(135deg,var(--dsw-alias-bg-overlay),var(--dsw-alias-bg-layer-1));border:2px solid #C9A96B;box-shadow:0 6px 20px rgba(20,60,50,0.30);white-space:nowrap;}',
   '.xiao-avatar{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #C9A96B;flex:none;}',
@@ -1589,6 +1868,21 @@ const XIAO_CSS: string[] = [
   '.xiao-settings-danger{border-color:var(--dsw-alias-state-error-primary)!important;color:var(--dsw-alias-state-error-primary)!important;}',
   '.xiao-settings-warn{font-size:12px;color:var(--dsw-alias-state-warn-primary);line-height:1.6;padding:2px 0;}',
   '.xiao-settings-hint{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.6;}',
+  '.xiao-upload-modal{position:fixed;inset:0;z-index:2147483600;background:rgba(10,24,20,0.55);display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,-apple-system,sans-serif;}',
+  '.xiao-upload-panel{width:min(560px,92vw);max-height:78vh;display:flex;flex-direction:column;gap:12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;box-shadow:0 16px 50px rgba(0,0,0,0.4);overflow:hidden;}',
+  '.xiao-upload-head{font-size:15px;font-weight:700;color:var(--dsw-alias-brand-primary);letter-spacing:1px;}',
+  '.xiao-upload-list{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0;overflow-y:auto;}',
+  '.xiao-upload-item{display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;cursor:pointer;}',
+  '.xiao-upload-item:hover{border-color:var(--dsw-alias-brand-primary);}',
+  '.xiao-upload-item-sel{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}',
+  '.xiao-upload-thumb{width:56px;height:56px;object-fit:cover;border-radius:8px;flex:none;background:var(--dsw-alias-bg-overlay);}',
+  '.xiao-upload-info{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1;}',
+  '.xiao-upload-name{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+  '.xiao-upload-meta{font-size:12px;color:var(--dsw-alias-label-secondary);}',
+  '.xiao-upload-ref{font-size:11px;color:var(--dsw-alias-label-secondary);display:flex;flex-wrap:wrap;gap:6px;align-items:center;}',
+  '.xiao-upload-cur{font-size:11px;color:var(--dsw-alias-state-success-primary);}',
+  '.xiao-upload-empty{font-size:13px;color:var(--dsw-alias-label-secondary);text-align:center;padding:24px 8px;line-height:1.6;}',
+  '.xiao-upload-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;border-top:1px solid var(--dsw-alias-border-l2);padding-top:12px;}',
 ];
 
 const XIAO_CSS_STRING = XIAO_CSS.join('');

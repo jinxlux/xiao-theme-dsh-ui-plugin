@@ -15,19 +15,31 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 ## Features
 
 - **Customizable palette (jade/emerald by default)**: light / dark jade palettes; pick the accent with a color wheel, and toggle the theme off from settings.
-- **Mascot badge**: a draggable, collapsible badge (bottom-right); title and subtitle can be set to any text, and the avatar image can be replaced by uploading a new one. The avatar also supports animated GIFs — an uploaded GIF plays as an animation with no separate toggle.
+- **Mascot badge**: a draggable, collapsible badge (bottom-right); title and subtitle can be set to any text, and the avatar image can be replaced by uploading a new one. The avatar also supports animated GIFs — an uploaded GIF plays as an animation with no separate toggle. A **Reset mascot** button restores the avatar path, title and subtitle to their defaults.
 - **Xiao-style voice**: injects a Xiao-voice instruction into the system prompt (toggleable), with Chinese / English templates or your own custom prompt.
 - **Frosted background**: configurable background image (relative plugin path, local absolute path, or direct upload), with adjustable blur and UI transparency. Uploading an **animated GIF** is auto-detected and used as a **live/dynamic background**; uploading an **MP4 / WebM / MOV / M4V video** is also auto-detected and played as a full-screen looping video background (with an optional sound toggle); static images or single-frame GIFs keep the static frosted treatment.
 - **UI & sidebar transparency control**: UI opacity (0.3–0.9) controls the main content area; sidebar opacity (0–1) independently controls the left/right sidebars, up to 100% fully opaque while always letting part of the background through.
-- **Accent color**: jade green by default, or pick any accent via the color wheel; the whole jade palette (panel surfaces, borders, brand color, sidebars, background gradient) shifts in sync, persisted after change.
+- **Accent color**: jade green by default, or pick any accent via the color wheel; the whole jade palette (panel surfaces, borders, brand color, sidebars, background gradient) shifts in sync, persisted after change. You can also **reset the accent back to the default jade** with one click.
 - **Theme management (multi-theme)**: save the current settings as a named theme, switch / rename / delete themes (the built-in "Xiao" theme is protected), reset the current theme back to defaults, and one-click import / export any theme as a `.json` file.
+- **Upload asset manager (picker)**: the background / avatar upload controls open a picker window listing everything already uploaded (thumbnail, size, last-modified, which themes reference it) so you can **re-select an existing file to reuse it**, or **upload a new one right there** (auto-selected after it succeeds). An **Open upload folder** button opens the folder in your file manager to add / remove / rename files directly. **Nothing is auto-deleted** — the uploads folder is user-managed.
 - **Settings page**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, theme management, frosted background (on/path/upload/blur/opacity; GIF or MP4/WebM/MOV/M4V video auto-detected as a dynamic background, with a sound toggle for video), UI and sidebar opacity.
 
 ## Requirements
 
-- DeepSeek Harness (`dsh` available)
+- DeepSeek Harness (`dsh` available) — tested on `0.1.1-rc.2` and `0.1.5-rc.1` (see [Version compatibility](#version-compatibility))
 - Node.js (≥ 18 recommended)
 - [pnpm](https://pnpm.io/)
+
+## Version compatibility
+
+Both ends of the last upgrade are supported — the previous versions and the current ones:
+
+| Component | Tested / supported | How the theme adapts |
+| --- | --- | --- |
+| DeepSeek Harness | `0.1.1-rc.2` (previous) → `0.1.5-rc.1` (current) | Left sidebar: the `sidebarCol` class-name suffix. Right sidebar: the old column name `detailsCol` and the native panel `data-sidebar-right-panel` (`0.1.5-rc.1`) — both anchors are kept, so either DSH works. |
+| better-sidebar (third-party) | `0.17.1` (previous) → `0.19.0` (current) | `0.17.1` drew its own right panel, matched through `data-dsh-panel` / `data-dsh-pane`; `0.19.0` registers its tabs into DSH's native right sidebar, matched through `data-sidebar-right-panel`. The newer bottom workbench panel (which also carries `data-dsh-panel`) is explicitly excluded and stays opaque. |
+
+Verified on 2026-09-10 against both pairs — `dsh 0.1.1-rc.2 + better-sidebar 0.17.1` and `dsh 0.1.5-rc.1 + better-sidebar 0.19.0`: the **sidebar opacity** slider drives the left and right sidebars on either pair, and every compatibility anchor is kept, so upgrading or rolling back does not break it. Older better-sidebar releases (0.14.x / 0.16.x) use the same `data-dsh-panel` anchor and are expected to work as well, but were not tested.
 
 ## Install online (quick)
 
@@ -69,8 +81,9 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - Open DSH Web → **Settings → Xiao Theme**: master toggle, accent color, inject voice, template language, custom prompt, avatar path, mascot title/subtitle, theme management, frosted background (on / path / upload / blur / opacity; GIF or MP4/WebM/MOV/M4V video auto-detected as a dynamic background, with a sound toggle for video), UI opacity, sidebar opacity.
 - **Accent color**: pick an accent with the color wheel (default jade green `#2E8B72`); the panel surfaces, borders, brand color, sidebars and background gradient all shift in sync. Semantic state colors (error / warning / success) stay fixed and don't follow the accent.
 - **Mascot**: badge title (default "靖妖傩舞") and subtitle (default "别挡路") can be set to any text; an empty title falls back to the default. The avatar image path accepts a plugin-relative path or a local absolute path, and you can upload an image directly to replace the avatar. The avatar also supports animated GIFs — an uploaded GIF plays as an animation with no separate toggle.
+- **Uploads (picker)**: click "Choose/upload background" or "Choose/upload avatar" to open an asset window — pick an existing upload to reuse it (backgrounds re-derive the dynamic flag automatically), or upload a new one right there; the new file is auto-selected. The **Open upload folder** button lets you manage the files directly. The **Reset theme color** and **Reset mascot** buttons restore those fields to defaults.
 - **UI opacity**: controls the main content area, range 0.3–0.9, capped so at least ~10% of the background stays visible.
-- **Sidebar opacity**: independently controls the left/right sidebars, range 0–1, up to 100% fully opaque; the left is DSH's own sidebar, and the right also targets the third-party better-sidebar plugin (`data-dsh-panel` / `data-dsh-pane`) — ignored automatically if that plugin isn't installed.
+- **Sidebar opacity**: independently controls the left/right sidebars, range 0–1, up to 100% fully opaque. The left is DSH's own sidebar; the right is DSH's native right-sidebar panel (stable anchor `data-sidebar-right-panel`), which is also exactly where **better-sidebar ≥ 0.19** mounts its tabs — so one slider covers both. Older better-sidebar releases (< 0.19) drew their own panel and are still matched through `data-dsh-panel` / `data-dsh-pane`. When neither is present the rules simply do nothing.
 - Changes take effect **immediately**, no DSH restart needed.
 - Settings are saved to `~/.dsh/xiao-theme.json`; uploaded background images/videos go to `~/.dsh/xiao-theme-uploads/` (user-level, not shipped with the repo). Uploads are streamed to disk and sized by purpose: avatars/images keep a 20MB cap, backgrounds (including videos) allow up to 200MB. Unsupported or mismatched formats are rejected with a clear message shown in the settings page (instead of silently failing).
 
@@ -85,7 +98,8 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - Default avatar / background use **in-package relative paths** (`resource/avatar.png`), readable across machines; keep `resource/` at the same level as `lib/` after building (current layout works). `resource/bg.svg` is legacy and no longer used.
 - **Video background compatibility**: a loop with the widest support uses H.264 (AVC) + AAC in `.mp4`, or VP8/VP9 in `.webm`. Some browsers can't decode HEVC (H.265) `.mp4`/`.mov`; `.avi`/`.mkv` aren't accepted.
 - The Xiao-voice prompt depends on DSH's `systemPrompt` assembly. If the agent preset filters the prompt down to only a persona, or uses a **complete persona**, the voice may not appear in that session (that's preset behavior, not a plugin bug).
-- "Sidebar opacity" targets DSH's `sidebarCol / detailsCol` columns and the third-party better-sidebar's `data-dsh-panel / data-dsh-pane` attributes; without better-sidebar installed, the right-side rules simply do nothing and don't affect the main UI.
+- "Sidebar opacity" targets DSH's own `sidebarCol` column and the native right-sidebar panel (`data-sidebar-right-panel`). Older DSH releases named that column `detailsCol`, and older better-sidebar releases drew their own panel tagged `data-dsh-panel` / `data-dsh-pane`; both anchors are kept for compatibility. The newer better-sidebar **bottom workbench** panel also carries `data-dsh-panel`, so it is explicitly excluded (`:not([data-dsh-bottom-panel])`) and stays opaque. Everything is driven by CSS only (no JS geometry) — the anchors are stable data attributes / class-name suffixes, never hashed class prefixes.
+- **Uploads are user-managed (no auto-delete)**: uploaded files are never deleted automatically, so the folder can grow over time. Use the picker's "Open upload folder" to add / remove / rename files yourself.
 - This plugin **does not read environment variables** for configuration; settings come only from `~/.dsh/xiao-theme.json` and compile-time defaults.
 
 ## License & disclaimers
