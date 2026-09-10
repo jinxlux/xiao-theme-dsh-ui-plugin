@@ -31,9 +31,20 @@ Web 界面做主题：配色、吉祥物徽章、背景、注入语气都能自�
 
 ## 环境要求
 
-- DeepSeek Harness（`dsh` 可用）
+- DeepSeek Harness（`dsh` 可用）—— 已在 `0.1.1-rc.2` 与 `0.1.5-rc.1` 上实测（见[版本兼容](#版本兼容)）
 - Node.js（建议 ≥ 18）
 - [pnpm](https://pnpm.io/)
+
+## 版本兼容
+
+上次升级的**两端都兼容**——升级前的版本与当前版本都能用：
+
+| 组件 | 实测 / 支持范围 | 主题如何适配 |
+| --- | --- | --- |
+| DeepSeek Harness | `0.1.1-rc.2`（升级前）→ `0.1.5-rc.1`（当前） | 左侧栏：类名后缀 `sidebarCol`。右侧栏：老列名 `detailsCol` 与新版原生面板 `data-sidebar-right-panel` 两条锚点同时保留，任一版本 DSH 都生效。 |
+| better-sidebar（第三方） | `0.17.1`（升级前）→ `0.19.0`（当前） | `0.17.1` 是它自绘的右侧面板，走 `data-dsh-panel` / `data-dsh-pane`；`0.19.0` 改为把每个 tab 注册进 DSH 原生右栏，走 `data-sidebar-right-panel`。新版把 `data-dsh-panel` 挪到了「底部工作台面板」上（同元素带 `data-dsh-bottom-panel`），已明确排除、保持不透明。 |
+
+2026-09-10 实测：`dsh 0.1.1-rc.2 + better-sidebar 0.17.1` 与 `dsh 0.1.5-rc.1 + better-sidebar 0.19.0` 两套组合下，「侧栏不透明度」对左右侧栏均生效；所有兼容锚点都保留着，升级或回退都不会失效。更老的 better-sidebar（0.14.x / 0.16.x）用的是同一套 `data-dsh-panel` 锚点，预期同样可用，但未实测。
 
 ## 在线安装（在线快速安装）
 
@@ -79,8 +90,10 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - **吉祥物**：徽章标题（默认「靖妖傩舞」）与副标（默认「别挡路」）可改成任意文字，留空标题会回落默认。头像路径支持相对插件目录或本地绝对路径，也可直接上传图片替换头像。头像同样支持 GIF 动图，上传 GIF 即以动图播放（无需单独开关）。
 - **上传（选择器）**：点「选择/上传背景图」或「选择/上传头像」打开资产窗口——点选已有上传即可复用（背景会自动重算动态标志），也可在窗口内上传新文件并自动选中。「打开上传文件夹」可直接管理这些文件；「恢复主题颜色默认」「恢复吉祥物默认」一键还原到出厂默认。
 - **界面不透明度**：控制聊天主内容区的底色，范围 0.3–0.9，上限留 10% 让背景恒透出。
-- **侧栏不透明度**：单独控制左右侧栏，范围 0–1，可拉到 100% 完全不透明；左侧为 DSH 自带的侧栏，
-  右侧同时作用于第三方 better-sidebar 插件（`data-dsh-panel` / `data-dsh-pane`）的面板，没装该插件时自动忽略。
+- **侧栏不透明度**：单独控制左右侧栏，范围 0–1，可拉到 100% 完全不透明。左侧为 DSH 自带的侧栏；
+  右侧为 DSH 原生右栏面板（稳定锚点 `data-sidebar-right-panel`）——**better-sidebar ≥ 0.19** 的 tab 正是挂进这块面板，
+  所以同一个滑杆同时覆盖两者。旧版 better-sidebar（< 0.19）自绘的面板仍经 `data-dsh-panel` / `data-dsh-pane` 命中。
+  两者都不存在时规则自动失效、不影响主界面。
 - 改动**即时生效**，无需重启 DSH。
 - 设置保存在 `~/.dsh/xiao-theme.json`；上传的背景图/视频保存在 `~/.dsh/xiao-theme-uploads/`（用户级，不随仓库走）。上传为流式写盘，并按用途分档上限：头像/图片限 20MB，背景（含视频）放宽至 200MB。不支持或格式不匹配的文件会被拒绝，并在设置页显示明确提示（不再静默失败）。
 
@@ -100,8 +113,10 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - **视频背景兼容性**：跨浏览器最稳的是 H.264 (AVC) + AAC 的 `.mp4`，或 VP8/VP9 的 `.webm`。部分浏览器无法解码 HEVC(H.265) 的 `.mp4`/`.mov`；`.avi`/`.mkv` 不受支持。
 - 魈式语气提示词依赖 DSH 的 `systemPrompt` 组装。若所用 agent 预设会把提示**过滤成只剩 persona**，
   或使用了 **complete persona**，该语气在对应会话可能不出现（这是预设行为，不是插件故障）。
-- 「侧栏不透明度」通过 DSH 布局的 `sidebarCol / detailsCol` 列，以及第三方 better-sidebar 的
-  `data-dsh-panel / data-dsh-pane` 属性生效；未安装 better-sidebar 时右侧规则自动失效，不影响主界面。
+- 「侧栏不透明度」通过 DSH 布局的 `sidebarCol` 列与原生右栏面板 `data-sidebar-right-panel` 生效。
+  旧版 DSH 的右栏列名 `detailsCol`、旧版 better-sidebar 自绘面板的 `data-dsh-panel` / `data-dsh-pane` 仍保留兼容
+  （新版更好的侧栏把 `data-dsh-panel` 挪到了「底部工作台面板」上，已用 `:not([data-dsh-bottom-panel])` 明确排除，
+  避免底部面板涂透后透出对话文字）。未安装 better-sidebar 时，右栏规则照常作用于 DSH 自带右栏，不影响主界面。
 - **上传文件为用户自管理（不会自动删除）**：上传的文件永远不会被自动清理，目录可能逐渐变大。请用选择器的「打开上传文件夹」自行增删改。
 - 本插件**不读取环境变量**做配置；设置只来自 `~/.dsh/xiao-theme.json` 与编译期默认值。
 

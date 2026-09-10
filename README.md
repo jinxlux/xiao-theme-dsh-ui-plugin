@@ -26,9 +26,20 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 
 ## Requirements
 
-- DeepSeek Harness (`dsh` available)
+- DeepSeek Harness (`dsh` available) — tested on `0.1.1-rc.2` and `0.1.5-rc.1` (see [Version compatibility](#version-compatibility))
 - Node.js (≥ 18 recommended)
 - [pnpm](https://pnpm.io/)
+
+## Version compatibility
+
+Both ends of the last upgrade are supported — the previous versions and the current ones:
+
+| Component | Tested / supported | How the theme adapts |
+| --- | --- | --- |
+| DeepSeek Harness | `0.1.1-rc.2` (previous) → `0.1.5-rc.1` (current) | Left sidebar: the `sidebarCol` class-name suffix. Right sidebar: the old column name `detailsCol` and the native panel `data-sidebar-right-panel` (`0.1.5-rc.1`) — both anchors are kept, so either DSH works. |
+| better-sidebar (third-party) | `0.17.1` (previous) → `0.19.0` (current) | `0.17.1` drew its own right panel, matched through `data-dsh-panel` / `data-dsh-pane`; `0.19.0` registers its tabs into DSH's native right sidebar, matched through `data-sidebar-right-panel`. The newer bottom workbench panel (which also carries `data-dsh-panel`) is explicitly excluded and stays opaque. |
+
+Verified on 2026-09-10 against both pairs — `dsh 0.1.1-rc.2 + better-sidebar 0.17.1` and `dsh 0.1.5-rc.1 + better-sidebar 0.19.0`: the **sidebar opacity** slider drives the left and right sidebars on either pair, and every compatibility anchor is kept, so upgrading or rolling back does not break it. Older better-sidebar releases (0.14.x / 0.16.x) use the same `data-dsh-panel` anchor and are expected to work as well, but were not tested.
 
 ## Install online (quick)
 
@@ -72,7 +83,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - **Mascot**: badge title (default "靖妖傩舞") and subtitle (default "别挡路") can be set to any text; an empty title falls back to the default. The avatar image path accepts a plugin-relative path or a local absolute path, and you can upload an image directly to replace the avatar. The avatar also supports animated GIFs — an uploaded GIF plays as an animation with no separate toggle.
 - **Uploads (picker)**: click "Choose/upload background" or "Choose/upload avatar" to open an asset window — pick an existing upload to reuse it (backgrounds re-derive the dynamic flag automatically), or upload a new one right there; the new file is auto-selected. The **Open upload folder** button lets you manage the files directly. The **Reset theme color** and **Reset mascot** buttons restore those fields to defaults.
 - **UI opacity**: controls the main content area, range 0.3–0.9, capped so at least ~10% of the background stays visible.
-- **Sidebar opacity**: independently controls the left/right sidebars, range 0–1, up to 100% fully opaque; the left is DSH's own sidebar, and the right also targets the third-party better-sidebar plugin (`data-dsh-panel` / `data-dsh-pane`) — ignored automatically if that plugin isn't installed.
+- **Sidebar opacity**: independently controls the left/right sidebars, range 0–1, up to 100% fully opaque. The left is DSH's own sidebar; the right is DSH's native right-sidebar panel (stable anchor `data-sidebar-right-panel`), which is also exactly where **better-sidebar ≥ 0.19** mounts its tabs — so one slider covers both. Older better-sidebar releases (< 0.19) drew their own panel and are still matched through `data-dsh-panel` / `data-dsh-pane`. When neither is present the rules simply do nothing.
 - Changes take effect **immediately**, no DSH restart needed.
 - Settings are saved to `~/.dsh/xiao-theme.json`; uploaded background images/videos go to `~/.dsh/xiao-theme-uploads/` (user-level, not shipped with the repo). Uploads are streamed to disk and sized by purpose: avatars/images keep a 20MB cap, backgrounds (including videos) allow up to 200MB. Unsupported or mismatched formats are rejected with a clear message shown in the settings page (instead of silently failing).
 
@@ -87,7 +98,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - Default avatar / background use **in-package relative paths** (`resource/avatar.png`), readable across machines; keep `resource/` at the same level as `lib/` after building (current layout works). `resource/bg.svg` is legacy and no longer used.
 - **Video background compatibility**: a loop with the widest support uses H.264 (AVC) + AAC in `.mp4`, or VP8/VP9 in `.webm`. Some browsers can't decode HEVC (H.265) `.mp4`/`.mov`; `.avi`/`.mkv` aren't accepted.
 - The Xiao-voice prompt depends on DSH's `systemPrompt` assembly. If the agent preset filters the prompt down to only a persona, or uses a **complete persona**, the voice may not appear in that session (that's preset behavior, not a plugin bug).
-- "Sidebar opacity" targets DSH's `sidebarCol / detailsCol` columns and the third-party better-sidebar's `data-dsh-panel / data-dsh-pane` attributes; without better-sidebar installed, the right-side rules simply do nothing and don't affect the main UI.
+- "Sidebar opacity" targets DSH's own `sidebarCol` column and the native right-sidebar panel (`data-sidebar-right-panel`). Older DSH releases named that column `detailsCol`, and older better-sidebar releases drew their own panel tagged `data-dsh-panel` / `data-dsh-pane`; both anchors are kept for compatibility. The newer better-sidebar **bottom workbench** panel also carries `data-dsh-panel`, so it is explicitly excluded (`:not([data-dsh-bottom-panel])`) and stays opaque. Everything is driven by CSS only (no JS geometry) — the anchors are stable data attributes / class-name suffixes, never hashed class prefixes.
 - **Uploads are user-managed (no auto-delete)**: uploaded files are never deleted automatically, so the folder can grow over time. Use the picker's "Open upload folder" to add / remove / rename files yourself.
 - This plugin **does not read environment variables** for configuration; settings come only from `~/.dsh/xiao-theme.json` and compile-time defaults.
 

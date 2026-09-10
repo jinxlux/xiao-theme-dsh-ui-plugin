@@ -431,6 +431,12 @@ function buildTokens(cfg: XiaoConfig): Record<string, ThemeTokenValue> {
       light: rgba(lr, lg, lb, Math.max(light - 0.1, 0.2)),
       dark: rgba(dr, dg, db, Math.max(dark - 0.1, 0.2)),
     };
+    // layer-3 原先是本主题的缺口（DSH 默认是不透明的静态中性色），better-sidebar 的卡片/标签条会用到它，
+    // 不补的话右栏内部会留下一块「不跟主题、也不跟不透明度」的实色。透度取 1/2 之间（DSH 原层级顺序）。
+    tokens['--dsw-alias-bg-layer-3'] = {
+      light: rgba(lr, lg, lb, Math.max(light - 0.08, 0.22)),
+      dark: rgba(dr, dg, db, Math.max(dark - 0.08, 0.22)),
+    };
     tokens['--dsw-alias-bg-overlay'] = {
       light: rgba(lr, lg, lb, Math.min(light + 0.12, PANEL_OPACITY_MAX)),
       dark: rgba(dr, dg, db, Math.min(dark + 0.12, PANEL_OPACITY_MAX)),
@@ -566,6 +572,12 @@ function syncBackground(cfg: XiaoConfig): void {
     de.style.removeProperty('--xiao-bg-ovl-dark');
     de.style.removeProperty('--xiao-sidebar-ovl');
     de.style.removeProperty('--xiao-sidebar-ovl-dark');
+    de.style.removeProperty('--xiao-sidebar-ovl-l1');
+    de.style.removeProperty('--xiao-sidebar-ovl-l2');
+    de.style.removeProperty('--xiao-sidebar-ovl-l3');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark-l1');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark-l2');
+    de.style.removeProperty('--xiao-sidebar-ovl-dark-l3');
     de.style.removeProperty('--xiao-theme-color');
     de.style.removeProperty('--xiao-grad-a');
     de.style.removeProperty('--xiao-grad-b');
@@ -609,6 +621,15 @@ function syncBackground(cfg: XiaoConfig): void {
   // 侧栏杆：浅色/深色各一个变量，由 CSS 属性选择器套到 sidebarCol/detailsCol 上。
   de.style.setProperty('--xiao-sidebar-ovl', rgba(lr, lg, lb, so));
   de.style.setProperty('--xiao-sidebar-ovl-dark', rgba(dr, dg, db, so));
+  // 右栏面板内部的语义 token 覆盖值（见 XIAO_CSS 的 [data-sidebar-right-panel] 规则）：面板内的
+  // tab 条/卡片走 --dsw-alias-bg-layer-1/2/3，比面板底色略实一点，既保住内容可读性，又让整体
+  // 仍随侧栏不透明度单调变化（so=0 近全透、so=1 完全不透明）。不设 0.25 之类下限，否则拖到 0 也不透。
+  de.style.setProperty('--xiao-sidebar-ovl-l1', rgba(lr, lg, lb, Math.min(so + 0.04, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-l2', rgba(lr, lg, lb, Math.min(so + 0.08, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-l3', rgba(lr, lg, lb, Math.min(so + 0.06, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l1', rgba(dr, dg, db, Math.min(so + 0.04, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l2', rgba(dr, dg, db, Math.min(so + 0.08, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l3', rgba(dr, dg, db, Math.min(so + 0.06, 1)));
   // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
   if (frame) {
     const isDark = document.body.hasAttribute('data-ds-dark-theme');
@@ -1795,15 +1816,25 @@ const XIAO_CSS: string[] = [
   'html.xiao-bg-on.xiao-bg-video body{background-image:none!important;}',
   'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
   'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
-  // 左右侧栏独立底色：用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
+  // 左侧：DSH 自带侧栏，用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
+  // detailsCol 是 0.1.5 之前的右栏列名，保留仅供未升级 DSH 的用户；0.1.5-rc.1 起它已不存在。
   'html.xiao-bg-on [class$="sidebarCol"],[class$="detailsCol"]{background:var(--xiao-sidebar-ovl)!important;}',
   'html.xiao-bg-on body[data-ds-dark-theme] [class$="sidebarCol"],body[data-ds-dark-theme] [class$="detailsCol"]{background:var(--xiao-sidebar-ovl-dark)!important;}',
-  // 第三方 better-sidebar 右侧面板：全局 data 属性锚点（不依赖其哈希类名），跟随侧栏不透明度。
-  // 没装该插件时选择器匹配不到，天然无副作用、不会崩。
-  'html.xiao-bg-on [data-dsh-panel]{background:var(--xiao-sidebar-ovl)!important;}',
-  'html.xiao-bg-on [data-dsh-panel] [data-dsh-pane]{background:var(--xiao-sidebar-ovl)!important;}',
-  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]{background:var(--xiao-sidebar-ovl-dark)!important;}',
-  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel] [data-dsh-pane]{background:var(--xiao-sidebar-ovl-dark)!important;}',
+  // 右侧：现 DSH 原生右栏面板（dsh-client-ui-sidebar-right 的 .panel，稳定锚点 data-sidebar-right-panel）。
+  // better-sidebar ≥0.19 不再自绘右栏，而是把每个 tab 注册进这块原生面板（ctx.sidebarRight /
+  // sidebar.right.pane.tab），所以这一条同时覆盖「DSH 自带右栏」与「better-sidebar 的新右栏」。
+  // 除面板底色外，还在该子树内覆盖语义背景 token：better-sidebar 的 CSS 模块（tab 条、卡片、编辑器、
+  // 文件树…）大量消费 --dsw-alias-bg-layer-1/2/3，只改面板底色的话内部表面仍是不透明的。
+  // 浮窗层（data-sidebar-right-float-host）portal 到 body，不在此子树内，故不受影响。
+  'html.xiao-bg-on [data-sidebar-right-panel]{background:var(--xiao-sidebar-ovl)!important;--dsw-alias-bg-base:var(--xiao-sidebar-ovl);--dsw-alias-bg-layer-1:var(--xiao-sidebar-ovl-l1);--dsw-alias-bg-layer-2:var(--xiao-sidebar-ovl-l2);--dsw-alias-bg-layer-3:var(--xiao-sidebar-ovl-l3);}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-sidebar-right-panel]{background:var(--xiao-sidebar-ovl-dark)!important;--dsw-alias-bg-base:var(--xiao-sidebar-ovl-dark);--dsw-alias-bg-layer-1:var(--xiao-sidebar-ovl-dark-l1);--dsw-alias-bg-layer-2:var(--xiao-sidebar-ovl-dark-l2);--dsw-alias-bg-layer-3:var(--xiao-sidebar-ovl-dark-l3);}',
+  // 旧版 better-sidebar（<0.19）自绘的右侧面板：保留 data 属性锚点做向后兼容。
+  // ⚠️ 新版把 data-dsh-panel 挪到了「底部工作台面板」上（同一元素还带 data-dsh-bottom-panel），
+  // 用 :not() 把它摘掉——它压在对话区上，涂透会透出对话文字。没装该插件时匹配不到，天然无副作用。
+  'html.xiao-bg-on [data-dsh-panel]:not([data-dsh-bottom-panel]){background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on [data-dsh-panel]:not([data-dsh-bottom-panel]) [data-dsh-pane]{background:var(--xiao-sidebar-ovl)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]:not([data-dsh-bottom-panel]){background:var(--xiao-sidebar-ovl-dark)!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-dsh-panel]:not([data-dsh-bottom-panel]) [data-dsh-pane]{background:var(--xiao-sidebar-ovl-dark)!important;}',
   '.xiao-mascot{position:fixed;right:18px;bottom:18px;z-index:2147483000;pointer-events:auto;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;}',
   '.xiao-badge{display:flex;align-items:center;gap:10px;padding:8px 12px 8px 10px;border-radius:999px;background:linear-gradient(135deg,var(--dsw-alias-bg-overlay),var(--dsw-alias-bg-layer-1));border:2px solid #C9A96B;box-shadow:0 6px 20px rgba(20,60,50,0.30);white-space:nowrap;}',
   '.xiao-avatar{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #C9A96B;flex:none;}',
