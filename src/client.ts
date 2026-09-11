@@ -30,6 +30,9 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   themeColor: '#2E8B72',
   mascotTitle: '靖妖傩舞',
   mascotSubtitle: '别挡路',
+  // 角色空间：**默认关闭**（老用户升级不会凭空多出一个 agent preset）；空字符串 = 使用 Host 内置的英文默认角色（魈）。
+  roleplayEnabled: false,
+  roleplayPersona: '',
 };
 const CLIENT_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
@@ -57,7 +60,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   themeTitle: { zh: '魈主题', en: 'Xiao Theme' },
   enableTheme: { zh: '启用魈主题', en: 'Enable Xiao theme' },
   themeColor: { zh: '主题颜色', en: 'Theme color' },
-  voiceSection: { zh: '提示词', en: 'Voice prompt' },
+  voiceSection: { zh: '语气（工作会话）', en: 'Voice (work sessions)' },
+  voiceSectionHint: { zh: '只改变说话方式：内容、工具与执行方式完全不变，不注入任何角色身份。', en: 'Tone only: the substance, tools and execution stay exactly the same; no character identity is injected.' },
   injectVoice: { zh: '注入语气', en: 'Inject voice' },
   templateLang: { zh: '模板语言', en: 'Template language' },
   customPrompt: { zh: '自定义提示词', en: 'Custom prompt' },
@@ -121,6 +125,22 @@ const STR: Record<string, { zh: string; en: string }> = {
   mascotDragOpen: { zh: '按住拖动，轻点重新打开', en: 'Drag to move, tap to reopen' },
   mascotShow: { zh: '重新显示魈主题提示', en: 'Show the Xiao theme badge' },
   mascotClose: { zh: '关闭魈主题提示', en: 'Close the Xiao theme badge' },
+  // —— 角色空间（娱乐）——
+  roleplaySection: { zh: '角色空间（娱乐）', en: 'Roleplay (entertainment)' },
+  roleplayEnable: { zh: '启用角色空间', en: 'Enable roleplay' },
+  roleplayPersona: { zh: '角色系统提示词', en: 'Roleplay system prompt' },
+  roleplayPersonaPlaceholder: { zh: '留空使用内置的「魈」角色设定（英文）；填入任意角色的完整设定即可换角色。', en: 'Leave empty to use the built-in Xiao role (English); paste any full character prompt to switch roles.' },
+  roleplayApply: { zh: '应用/更新预设', en: 'Apply / update preset' },
+  roleplayResetPersona: { zh: '恢复默认角色（魈）', en: 'Reset to default role (Xiao)' },
+  roleplayOpenFolder: { zh: '打开预设文件夹', en: 'Open preset folder' },
+  roleplayApplied: { zh: '已按当前角色文本更新预设', en: 'Preset updated from the current role text' },
+  roleplayStatusInstalled: { zh: '预设已安装', en: 'Preset installed' },
+  roleplayStatusMissing: { zh: '预设未安装', en: 'Preset not installed' },
+  roleplayStatusOff: { zh: '角色空间已关闭（未安装预设）', en: 'Roleplay is off (no preset installed)' },
+  roleplayStatusMasterOff: { zh: '「启用魈主题」总开关已关闭：角色空间不生效，预设已移除。', en: 'The "Enable Xiao theme" master switch is off: roleplay is inactive and its preset has been removed.' },
+  roleplayStatusUnknown: { zh: '读取预设状态失败', en: 'Failed to read preset status' },
+  roleplayHint: { zh: '默认关闭：打开上面的开关才会安装预设。角色会话是一个独立会话：开一个新会话，在顶部选择「角色空间（娱乐）」预设即可进入角色。它使用上面的完整角色设定作为系统提示词，且不挂载任何文件/命令工具，因此不会影响也不需要牺牲工作会话的能力；两边的历史互不相通。', en: 'Off by default: turn the switch above on to install the preset. A roleplay session is a separate session: start a new session and pick the "Roleplay" preset at the top to enter character. It uses the full character prompt above as its system prompt and mounts no file or command tools, so a work session\'s capability is neither affected nor traded away; the two keep separate histories.' },
+  roleplayHintWork: { zh: '工作会话只保留上方的「语气」注入，永不注入角色身份。', en: 'Work sessions keep only the tone injection above and never receive a character identity.' },
   mascotCloseTip: { zh: '关闭（可随时从风印重新打开）', en: 'Close (reopen anytime from the wind mark)' },
 };
 
@@ -392,6 +412,26 @@ async function importTheme(name: string, config: XiaoConfig): Promise<ThemeSumma
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, config }),
   });
+}
+
+// —— 角色空间（娱乐）API ——
+/** GET /xiao-theme/roleplay：预设安装状态（设置页只读展示）。 */
+interface RoleplayStatus {
+  presetId: string;
+  presetName: string;
+  enabled: boolean;
+  installed: boolean;
+  path: string;
+}
+
+async function getRoleplayStatus(): Promise<RoleplayStatus> {
+  return fetchJson<RoleplayStatus>('/xiao-theme/roleplay', { cache: 'no-store' });
+}
+async function applyRoleplayPreset(): Promise<{ ok?: boolean; installed?: boolean }> {
+  return fetchJson<{ ok?: boolean; installed?: boolean }>('/xiao-theme/roleplay-apply', { method: 'POST' });
+}
+async function openRoleplayFolder(): Promise<{ ok?: boolean; path?: string }> {
+  return fetchJson<{ ok?: boolean; path?: string }>('/xiao-theme/roleplay-open-folder', { method: 'POST' });
 }
 
 /** 触发浏览器下载：导出主题为 .json 文件。 */
@@ -1467,6 +1507,138 @@ function UploadPicker({
   );
 }
 
+/**
+ * 角色空间（娱乐）设置块：一键开关 + 角色 system prompt + 预设安装状态。
+ * 与上方「语气」分组彻底分开：这里产出的是一个独立 agent preset，永不进工作会话。
+ */
+function RoleplayGroup({ cfg, store }: { cfg: XiaoConfig; store: ConfigStore }): React.ReactElement {
+  // masterOn = 「启用魈主题」总开关；featureOn = 角色空间自己的开关（用户的选择，不受总开关影响）；
+  // active = 两者同时开才真正生效（Host 端同判断，总开关关闭时会移除预设）。
+  const masterOn = cfg.enabled !== false;
+  const featureOn = cfg.roleplayEnabled === true;
+  const enabled = masterOn && featureOn;
+  const persona = cfg.roleplayPersona || '';
+  const [status, setStatus] = React.useState<RoleplayStatus | null>(null);
+  const [busy, setBusy] = React.useState<boolean>(false);
+  const [hint, setHint] = React.useState<string | null>(null);
+
+  const refresh = React.useCallback(async (): Promise<void> => {
+    try {
+      setStatus(await getRoleplayStatus());
+    } catch {
+      setStatus(null);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void refresh();
+  }, [refresh, enabled, persona]);
+
+  const onApply = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setHint(null);
+    try {
+      await applyRoleplayPreset();
+      await refresh();
+      setHint(t('roleplayApplied'));
+    } catch (e) {
+      setHint(e instanceof Error ? e.message : String(e));
+    }
+    setBusy(false);
+  };
+
+  const onOpenFolder = async (): Promise<void> => {
+    setHint(null);
+    try {
+      const data = await openRoleplayFolder();
+      setHint(data.ok ? t('uploadsFolderOpened') : t('uploadsFolderFailed') + ' ' + (data.path || ''));
+    } catch {
+      setHint(t('uploadsFolderFailed'));
+    }
+  };
+
+  const statusText =
+    status === null
+      ? t('roleplayStatusUnknown')
+      : !masterOn
+        ? t('roleplayStatusMasterOff')
+        : !featureOn
+          ? t('roleplayStatusOff')
+          : (status.installed ? t('roleplayStatusInstalled') : t('roleplayStatusMissing')) +
+            ' · ' + status.presetName + ' · ' + status.path;
+
+  return React.createElement(
+    'div',
+    { className: 'xiao-settings-section' },
+    React.createElement('div', { className: 'xiao-settings-title' }, t('roleplaySection')),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('roleplayEnable')),
+      React.createElement('input', {
+        type: 'checkbox',
+        // 显示的是「用户自己的选择」，而不是合成结果：总开关关掉时不该把角色开关也画成关闭。
+        checked: featureOn,
+        disabled: !masterOn,
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+          void saveConfig(store, { roleplayEnabled: e.target.checked });
+        },
+      }),
+    ),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row xiao-settings-row-top' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('roleplayPersona')),
+      React.createElement('textarea', {
+        className: 'xiao-settings-textarea',
+        defaultValue: persona,
+        key: persona,
+        rows: 7,
+        disabled: !enabled,
+        placeholder: t('roleplayPersonaPlaceholder'),
+        onBlur: (e: React.FocusEvent<HTMLTextAreaElement>) => {
+          const next = e.target.value;
+          if (next !== persona) void saveConfig(store, { roleplayPersona: next });
+        },
+      }),
+    ),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement(
+        'button',
+        {
+          className: 'xiao-settings-btn',
+          type: 'button',
+          disabled: busy || !enabled,
+          onClick: () => void onApply(),
+        },
+        t('roleplayApply'),
+      ),
+      React.createElement(
+        'button',
+        {
+          className: 'xiao-settings-btn',
+          type: 'button',
+          disabled: !enabled,
+          onClick: () => void saveConfig(store, { roleplayPersona: '' }),
+        },
+        t('roleplayResetPersona'),
+      ),
+      React.createElement(
+        'button',
+        { className: 'xiao-settings-btn', type: 'button', onClick: () => void onOpenFolder() },
+        t('roleplayOpenFolder'),
+      ),
+    ),
+    React.createElement('div', { className: 'xiao-settings-hint' }, statusText),
+    React.createElement('div', { className: 'xiao-settings-hint' }, t('roleplayHint')),
+    React.createElement('div', { className: 'xiao-settings-hint' }, t('roleplayHintWork')),
+    hint ? React.createElement('div', { className: 'xiao-settings-hint' }, hint) : null,
+  );
+}
+
 function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
@@ -1536,6 +1708,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       'div',
       { className: 'xiao-settings-section' },
       React.createElement('div', { className: 'xiao-settings-title' }, t('voiceSection')),
+      React.createElement('div', { className: 'xiao-settings-hint' }, t('voiceSectionHint')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
@@ -1598,6 +1771,9 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         ),
       ),
     ),
+
+    // —— 角色空间（娱乐）——
+    React.createElement(RoleplayGroup, { cfg, store }),
 
     // —— 吉祥物 ——
     React.createElement(
