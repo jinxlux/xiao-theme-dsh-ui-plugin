@@ -154,7 +154,7 @@ async function checkArtifacts() {
     else ok('lib/client.js 含 inject/apply');
   }
 
-  for (const rel of ['resource/avatar.png', 'resource/avatar.png']) {
+  for (const rel of ['resource/avatar.png', 'resource/xiao_dynamic.gif']) {
     if (!(await fileExists(join(root, rel)))) fail(`静态资源缺失: ${rel}`);
     else ok(`静态资源存在: ${rel}`);
   }

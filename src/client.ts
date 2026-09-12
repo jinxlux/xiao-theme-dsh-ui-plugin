@@ -2157,6 +2157,18 @@ function apply(ctx: ClientCtx): void {
     'xiao-theme: background cleanup',
   );
 
+  // DSH 主题偏好 / 系统明暗切换时重同步背景：syncBackground 的 JS 内联兜底底色取决于当前明暗模式
+  // （body[data-ds-dark-theme]），仅靠配置变更不会重跑；这里补一个 theme/change 订阅（纯补偿，
+  // 不改变配置与用户操作语义）。青玉 token 本身是明暗双值、由 theme 服务自动重组，无需重设。
+  ctx.effect(() => {
+    const off = ctx.on?.('theme/change', () => {
+      syncBg();
+    });
+    return () => {
+      if (typeof off === 'function') off();
+    };
+  }, 'xiao-theme: theme change background sync');
+
   // 初次读配置，读完后同步主题 + 背景 + 驱动 UI
   void loadConfig(store).then(() => {
     syncTheme();

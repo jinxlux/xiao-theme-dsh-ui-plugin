@@ -51,8 +51,8 @@ export interface ClientCtx {
   get<S extends keyof ClientServices>(service: S): ClientServices[S] | undefined;
   /** 注册一个副作用/清理函数。 */
   effect(fn: () => void | (() => void), label?: string): void;
-  /** 订阅一个 Cordis 事件（如 locale/change）。 */
-  on?(event: string, listener: (...args: unknown[]) => void): void;
+  /** 订阅一个 Cordis 事件（如 theme/change），返回取消订阅的卸载函数。 */
+  on?(event: string, listener: (...args: unknown[]) => void): (() => void) | void;
   /** 取消订阅。 */
   off?(event: string, listener: (...args: unknown[]) => void): void;
 }

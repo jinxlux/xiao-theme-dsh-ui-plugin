@@ -241,8 +241,34 @@ function coerceThemeStore(value: ThemeStore): ThemeStore {
   return value;
 }
 
+/**
+ * 主题存储的进程内缓存（纯优化，不改变对外语义）：
+ * 媒体路由（/xiao-bg、/xiao-avatar.png）在每个 Range 请求上都会 readConfig()，视频播放会产生
+ * 成百上千次请求，原先每次都读盘 + JSON.parse。这里以「文件 mtime + size」为指纹缓存已解析结果：
+ * 指纹未变时直接复用（克隆一份交给调用方，避免调用方原地修改污染缓存）；指纹变化（含用户手工编辑
+ * 该文件）、文件缺失、或任何一次写入之后，都退回真实读盘，因此结果与逐次读盘完全一致。
+ */
+let themeStoreCache: { mtimeMs: number; size: number; value: ThemeStore } | null = null;
+
 /** 读取主题存储：新格式直接规整；旧裸 XiaoConfig 自动迁移为默认主题。 */
 async function readThemeStore(): Promise<ThemeStore> {
+  let fingerprint: { mtimeMs: number; size: number } | null = null;
+  try {
+    const st = await stat(CONFIG_PATH);
+    fingerprint = { mtimeMs: st.mtimeMs, size: st.size };
+  } catch {
+    fingerprint = null;
+  }
+  // 快速路径：文件未变 → 复用缓存（克隆，保证调用方拿到独立副本，可原地修改后写回）。
+  const cached = themeStoreCache;
+  if (
+    fingerprint !== null &&
+    cached !== null &&
+    cached.mtimeMs === fingerprint.mtimeMs &&
+    cached.size === fingerprint.size
+  ) {
+    return structuredClone(cached.value);
+  }
   let value: unknown;
   try {
     const text = await readFile(CONFIG_PATH, 'utf8');
@@ -250,24 +276,35 @@ async function readThemeStore(): Promise<ThemeStore> {
   } catch {
     value = undefined;
   }
-  if (isThemeStoreShape(value)) return coerceThemeStore(value);
-  // 旧版单配置迁移：成为「魈」默认主题的配置。
-  const raw =
-    value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  return {
-    activeThemeId: DEFAULT_THEME_ID,
-    themes: {
-      [DEFAULT_THEME_ID]: { name: DEFAULT_THEME_NAME, builtin: true, config: normalizeConfig(raw) },
-    },
-  };
+  let store: ThemeStore;
+  if (isThemeStoreShape(value)) {
+    store = coerceThemeStore(value);
+  } else {
+    // 旧版单配置迁移：成为「魈」默认主题的配置。
+    const raw =
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+    store = {
+      activeThemeId: DEFAULT_THEME_ID,
+      themes: {
+        [DEFAULT_THEME_ID]: { name: DEFAULT_THEME_NAME, builtin: true, config: normalizeConfig(raw) },
+      },
+    };
+  }
+  // 只缓存「确实读到了文件」的结果；文件缺失/损坏时的兜底默认值不缓存，保持逐次读盘的回落语义。
+  themeStoreCache =
+    value !== undefined && fingerprint !== null
+      ? { mtimeMs: fingerprint.mtimeMs, size: fingerprint.size, value: structuredClone(store) }
+      : null;
+  return store;
 }
 
-/** 原子写回主题存储（确保目录存在）。 */
+/** 原子写回主题存储（确保目录存在）。写入后失效缓存，下一次读取仍从磁盘读出真实内容。 */
 async function writeThemeStore(store: ThemeStore): Promise<void> {
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
   await writeFile(CONFIG_PATH, JSON.stringify(store, null, 2), 'utf8');
+  themeStoreCache = null;
 }
 
 /** 读取「当前主题」的配置（文件缺失或损坏时回落默认值）。 */
@@ -285,22 +322,91 @@ async function writeConfig(next: XiaoConfig): Promise<void> {
   await writeThemeStore(store);
 }
 
-/** 读取并解析 JSON 请求体（空体返回空对象）。 */
+/** JSON 请求体上限：配置 / 主题导入都是小 JSON，4MB 足够；超大 body 直接拒绝，避免撑爆内存。 */
+const JSON_BODY_MAX = 4 * 1024 * 1024;
+
+/**
+ * 跨源守卫（纯加固，不改变同源使用）：仅当请求显式携带 Origin 且其 authority 与 Host 不一致时判为跨源。
+ * 不带 Origin 的请求（curl、同源 GET、部分浏览器）一律放行——保持既有行为。
+ * 这不是替代 CSRF token，而是挡住「本地其它页面直接 POST 改设置 / 触发本机动作」。
+ */
+function isCrossOrigin(req: IncomingMessage): boolean {
+  const origin = String(req.headers.origin ?? '').trim();
+  if (origin === '') return false; // 无 Origin：放行（保持旧行为）
+  if (origin === 'null') return true; // sandbox iframe / file:// 等：视为跨源
+  const host = String(req.headers.host ?? '').trim();
+  if (host === '') return false; // 无 Host：无法判断，放行（保持旧行为）
+  try {
+    return new URL(origin).host.toLowerCase() !== host.toLowerCase();
+  } catch {
+    return true; // 无法解析的 Origin：视为不可信
+  }
+}
+
+/**
+ * 读取并解析 JSON 请求体（空体返回空对象）。
+ * 加固：① 带 body 时只接受 application/json——跨源「简单请求」无法携带该类型，会被浏览器预检挡住；
+ * ② body 有大小上限。同源设置页发的就是 application/json，行为不变；空体请求照旧返回 {}。
+ */
 function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    if (isCrossOrigin(req)) {
+      reject(new Error('cross-origin request rejected'));
+      return;
+    }
+    const contentType = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    const declaredLength = Number(req.headers['content-length'] ?? '0');
+    const hasBody =
+      (Number.isFinite(declaredLength) && declaredLength > 0) ||
+      typeof req.headers['transfer-encoding'] === 'string';
+    if (hasBody && contentType !== 'application/json') {
+      reject(new Error('unsupported content type'));
+      return;
+    }
+    if (Number.isFinite(declaredLength) && declaredLength > JSON_BODY_MAX) {
+      reject(new Error('request body too large'));
+      return;
+    }
     let raw = '';
-    req.setEncoding('utf8');
-    req.on('data', (chunk) => {
-      raw += String(chunk);
-    });
-    req.on('end', () => {
+    let size = 0;
+    let settled = false;
+    function cleanup(): void {
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+    }
+    function onData(chunk: string): void {
+      if (settled) return;
+      size += Buffer.byteLength(chunk, 'utf8');
+      if (size > JSON_BODY_MAX) {
+        settled = true;
+        cleanup();
+        req.resume(); // 丢弃剩余 body，保证连接不被挂住
+        reject(new Error('request body too large'));
+        return;
+      }
+      raw += chunk;
+    }
+    function onEnd(): void {
+      if (settled) return;
+      settled = true;
+      cleanup();
       try {
         resolve(raw.length === 0 ? {} : (JSON.parse(raw) as Record<string, unknown>));
       } catch (error) {
         reject(error);
       }
-    });
-    req.on('error', reject);
+    }
+    function onError(error: unknown): void {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error('request error'));
+    }
+    req.setEncoding('utf8');
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
   });
 }
 
@@ -408,6 +514,9 @@ const HOST_ERR = {
   },
   formatMismatch: { zh: '文件格式与扩展名不匹配', en: 'File format does not match its extension' },
   uploadAborted: { zh: '上传已中断', en: 'Upload aborted' },
+  unsupportedContentType: { zh: '请求格式不受支持', en: 'Unsupported request content type' },
+  bodyTooLarge: { zh: '请求内容过大', en: 'Request body too large' },
+  crossOrigin: { zh: '已拒绝跨源请求', en: 'Cross-origin request rejected' },
 } as const;
 
 /** 抛出型错误：已知的转成对应语言文案（如文件过大），系统错误原样保留。 */
@@ -422,7 +531,17 @@ function requestError(req: IncomingMessage, error: unknown): string {
   if (msg === 'unsupported format') return HOST_ERR.unsupportedFormat[lang];
   if (msg === 'format mismatch') return HOST_ERR.formatMismatch[lang];
   if (msg === 'upload aborted') return HOST_ERR.uploadAborted[lang];
+  if (msg === 'unsupported content type') return HOST_ERR.unsupportedContentType[lang];
+  if (msg === 'request body too large') return HOST_ERR.bodyTooLarge[lang];
+  if (msg === 'cross-origin request rejected') return HOST_ERR.crossOrigin[lang];
   return msg;
+}
+
+/** 变更类路由的同源守卫：跨源请求直接 403；无 Origin 的请求放行（见 isCrossOrigin）。 */
+function rejectIfCrossOrigin(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!isCrossOrigin(req)) return false;
+  sendJson(res, 403, { error: HOST_ERR.crossOrigin[langFromReq(req)] });
+  return true;
 }
 
 /**
@@ -977,6 +1096,7 @@ export function apply(ctx: HostCtx): void {
               return;
             }
             if (req.method === 'POST') {
+              if (rejectIfCrossOrigin(req, res)) return;
               try {
                 const body = await readJsonBody(req);
                 const current = await readConfig();
@@ -1095,6 +1215,7 @@ export function apply(ctx: HostCtx): void {
                 response.end();
                 return;
               }
+              if (rejectIfCrossOrigin(request, response)) return;
               try {
                 // kind 参数区分上传用途：背景图默认前缀 bg-；头像请求带 kind=avatar 用 avatar- 前缀。
                 const kind = queryParam(request, 'kind') === 'avatar' ? 'avatar' : 'bg';
@@ -1235,6 +1356,7 @@ export function apply(ctx: HostCtx): void {
               res.end();
               return;
             }
+            if (rejectIfCrossOrigin(req, res)) return;
             try {
               await mkdir(UPLOAD_DIR, { recursive: true });
               const ok = openFolder(UPLOAD_DIR);
@@ -1284,6 +1406,7 @@ export function apply(ctx: HostCtx): void {
                 res.end();
                 return;
               }
+              if (rejectIfCrossOrigin(req, res)) return;
               try {
                 const installed = await syncRoleplayPreset();
                 sendJson(res, 200, { ok: true, installed });
@@ -1302,6 +1425,7 @@ export function apply(ctx: HostCtx): void {
                 res.end();
                 return;
               }
+              if (rejectIfCrossOrigin(req, res)) return;
               try {
                 // 生效状态先按当前配置落盘一次，未生效时只建目录，保证打开的目录一定存在。
                 const config = await readConfig();
@@ -1346,6 +1470,7 @@ export function apply(ctx: HostCtx): void {
         res.end();
         return;
       }
+      if (rejectIfCrossOrigin(req, res)) return;
       try {
         const body = await readJsonBody(req);
         const name =
@@ -1373,6 +1498,7 @@ export function apply(ctx: HostCtx): void {
         res.end();
         return;
       }
+      if (rejectIfCrossOrigin(req, res)) return;
       try {
         const body = await readJsonBody(req);
         const id = typeof body.id === 'string' ? body.id : '';
@@ -1400,6 +1526,7 @@ export function apply(ctx: HostCtx): void {
         res.end();
         return;
       }
+      if (rejectIfCrossOrigin(req, res)) return;
       try {
         const body = await readJsonBody(req);
         const id = typeof body.id === 'string' ? body.id : '';
@@ -1425,6 +1552,7 @@ export function apply(ctx: HostCtx): void {
         res.end();
         return;
       }
+      if (rejectIfCrossOrigin(req, res)) return;
       try {
         const body = await readJsonBody(req);
         const id = typeof body.id === 'string' ? body.id : '';
@@ -1480,6 +1608,7 @@ export function apply(ctx: HostCtx): void {
         res.end();
         return;
       }
+      if (rejectIfCrossOrigin(req, res)) return;
       try {
         const body = await readJsonBody(req);
         const configRaw = body.config;
