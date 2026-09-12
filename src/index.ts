@@ -5,18 +5,58 @@
  *
  * TypeScript 实现：逻辑与 xiao-ui-theme 保持一致，但界面经 `host.types` 强类型约束，编译期即可暴露接口笔误。
  */
-import { readFile, writeFile, mkdir, unlink, stat, readdir } from 'node:fs/promises';
-import { createWriteStream, createReadStream } from 'node:fs';
+import { readFile, writeFile, mkdir, unlink, rmdir, stat, readdir } from 'node:fs/promises';
+import { createWriteStream, createReadStream, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { dirname, join, basename, extname, relative, isAbsolute } from 'node:path';
+import { dirname, join, resolve, basename, extname, relative, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { VoiceLanguage, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
 import type { HostCtx, WebRouteHandler } from './host.types';
 
-const CONFIG_PATH = join(homedir(), '.dsh', 'xiao-theme.json');
-const UPLOAD_DIR = join(homedir(), '.dsh', 'xiao-theme-uploads');
+/**
+ * DSH 用户数据根目录。DSH 的解析优先级是「composition 里显式配置 > $DSH_HOME > ~/.dsh」
+ * （见 @deepseek-ai/dsh-home-paths 的 resolveDshHome）；插件看不到宿主的显式配置，
+ * 因此对齐用户级覆盖，并**逐条复刻它的处理顺序**，否则会和 DSH 解析到不同目录：
+ *   1) $DSH_HOME 非空优先（空 / 全空白按未设置，避免解析到 cwd），否则 ~/.dsh；
+ *   2) 展开前导 ~、~/、~\（只处理裸 ~ 与当前用户形式，~user 原样保留）；
+ *   3) resolve() 规范化成绝对路径（相对值按 cwd 解析）。
+ * 这里**不写死**任何机器路径——每台机器各自解析自己的家目录。
+ */
+const DSH_HOME: string = (() => {
+  const fromEnv = (process.env.DSH_HOME ?? '').trim();
+  const chosen = fromEnv.length > 0 ? fromEnv : join(homedir(), '.dsh');
+  const expanded =
+    chosen === '~'
+      ? homedir()
+      : chosen.startsWith('~/') || chosen.startsWith('~\\')
+        ? join(homedir(), chosen.slice(2))
+        : chosen;
+  return resolve(expanded);
+})();
+/**
+ * 插件私有数据（设置 / 上传）的落点，遵循 DSH 的单一数据根，但要向后兼容老位置：
+ * - 新位置有数据 → 用新位置（$DSH_HOME 生效时优先，用户明确把 DSH 数据放到别处就该跟着走）；
+ * - 否则老位置已有数据 → **继续用老位置**：老用户升级后设置与上传原地不动，不出现"全丢"的观感；
+ * - 两者都没有（新用户，含一开始就设了 $DSH_HOME 的人）→ 用新位置，插件数据全部落在 DSH 数据根下
+ *   （可备份、可随盘迁移，也不依赖家目录可写）。
+ * ⚠️ 只在进程启动时判定一次：读与写必须是同一个目录，否则同一次运行里会出现"刚上传完列表却是空的"。
+ */
+const LEGACY_CONFIG_PATH = join(homedir(), '.dsh', 'xiao-theme.json');
+const LEGACY_UPLOAD_DIR = join(homedir(), '.dsh', 'xiao-theme-uploads');
+const ROOTED_CONFIG_PATH = join(DSH_HOME, 'xiao-theme.json');
+const ROOTED_UPLOAD_DIR = join(DSH_HOME, 'xiao-theme-uploads');
+const CONFIG_PATH =
+  existsSync(ROOTED_CONFIG_PATH) || !existsSync(LEGACY_CONFIG_PATH) ? ROOTED_CONFIG_PATH : LEGACY_CONFIG_PATH;
+const UPLOAD_DIR =
+  existsSync(ROOTED_UPLOAD_DIR) || !existsSync(LEGACY_UPLOAD_DIR) ? ROOTED_UPLOAD_DIR : LEGACY_UPLOAD_DIR;
+// 娱乐功能「角色空间」：本插件生成/维护的 DSH 用户级 agent preset。
+// 这一处**必须**和 DSH 的解析结果一致（DSH 会去扫描这个根目录），所以跟随 $DSH_HOME。
+const AGENT_PRESET_ROOT = join(DSH_HOME, '.agent-presets');
+const ROLEPLAY_PRESET_ID = 'xiao-roleplay'; // 目录名，须匹配 [a-z0-9][a-z0-9-]*
+const ROLEPLAY_PRESET_DIR = join(AGENT_PRESET_ROOT, ROLEPLAY_PRESET_ID);
+const ROLEPLAY_PRESET_NAME = '角色空间（娱乐）'; // DSH 新会话选择器里显示的名字
 const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url)); // 插件根目录（lib 的上一级）
 const MAX_UPLOAD_AVATAR = 20 * 1024 * 1024; // 头像/图片保持原上限（<img>，无需大文件）
 const MAX_UPLOAD_BG = 200 * 1024 * 1024; // 背景（含视频）放宽：流式落盘后内存不再是瓶颈
@@ -42,6 +82,10 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   themeColor: '#2E8B72',
   mascotTitle: '靖妖傩舞',
   mascotSubtitle: '别挡路',
+  // 角色空间：**默认关闭**（老用户升级不会凭空多出一个 agent preset，想用需自己打开）；
+  // 空字符串 = 使用内置的英文默认角色（ROLEPLAY_PERSONA_DEFAULT）。
+  roleplayEnabled: false,
+  roleplayPersona: '',
 };
 const HOST_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
@@ -149,6 +193,10 @@ function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
       typeof parsed.mascotSubtitle === 'string'
         ? parsed.mascotSubtitle
         : HOST_DEFAULT_CONFIG.mascotSubtitle,
+    // 默认关闭：**缺失即 false**（旧配置没有这个字段 → 不安装预设），只有显式 true 才开启。
+    roleplayEnabled: parsed.roleplayEnabled === true,
+    roleplayPersona:
+      typeof parsed.roleplayPersona === 'string' ? parsed.roleplayPersona : HOST_DEFAULT_CONFIG.roleplayPersona,
   };
 }
 
@@ -439,6 +487,129 @@ function voiceText(config: XiaoConfig): string {
   return config.voiceLanguage === 'zh' ? VOICE_ZH : VOICE_EN;
 }
 
+// —— 娱乐功能「角色空间」：把角色 system prompt 同步为一个独立 agent preset ——
+
+/**
+ * 内置默认角色设定（英文，默认角色 = 魈）。config.roleplayPersona 为空时使用。
+ * 只存在于 Host 半：Client 只需要「空 = 用默认」的语义与占位说明，避免两处长文本漂移。
+ */
+const ROLEPLAY_PERSONA_DEFAULT = [
+  'You are Xiao, the Vigilant Yaksha — the only character in this session.',
+  'This is an entertainment roleplay session, not a work assistant. Stay in character at all times.',
+  '',
+  '1. Voice: terse, cold, restrained. You may weave in imagery of wind, yakshas, demons and Liyue, but keep it readable — no rambling, no emoji spam.',
+  '2. You have no tools: no file, command, network or task access. Never claim you ran, read, changed, verified or delivered anything.',
+  '3. Never present invented content as verified fact. If asked about real code, data or events, answer in character and say plainly that it is in-character talk.',
+  '4. Never impersonate a real person, and never claim real authority or credentials.',
+  '5. Keep replies conversational and reasonably short; avoid walls of text.',
+].join('\n');
+
+/**
+ * 把角色文本渲染成 YAML 字面块标量：逐行加固定缩进，行尾空白与控制字符剥掉。
+ * 用显式缩进指示符（`|2-`）配合固定的 6 空格内容缩进，所以「首行缩进即块缩进」的自动探测
+ * 不再生效：换行、冒号、引号、井号、前导空格都能原样保留，既不转义也不可能撑破 YAML。
+ */
+function yamlLiteralBlock(text: string, indent: string): string {
+  const clean = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
+  return clean
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.replace(/[ \t]+$/, '');
+      if (trimmed.length === 0) return '';
+      // 前导 tab 转空格：YAML 块标量的缩进不接受 tab。
+      return indent + trimmed.replace(/^[ \t]+/, (lead) => lead.replace(/\t/g, ' '));
+    })
+    .join('\n');
+}
+
+/** 生成的 agent.cordis.yml：persona 即完整 system prompt，且不挂任何工具（能力防火墙）。 */
+function roleplayComposition(persona: string): string {
+  return [
+    '# Auto-generated by the xiao-ui-theme-ts plugin — do not hand-edit.',
+    '#',
+    '# The roleplay preset: the persona prefix IS the complete system prompt and no tools are',
+    '# mounted, so a session composed from it can never read files or run commands. To change',
+    '# the character, edit the role text in DSH Web -> Settings -> Xiao Theme -> Roleplay.',
+    '- id: persona',
+    "  name: '@deepseek-ai/dsh-persona'",
+    '  config:',
+    // |2-：显式缩进指示符（父级 4 空格 + 2 = 内容 6 空格），内容原样保留、结尾不留换行。
+    '    prefix: |2-',
+    yamlLiteralBlock(persona, '      '),
+    '    complete: true',
+    '    includeRuntimeContext: false',
+    '',
+  ].join('\n');
+}
+
+/** 生成的 preset.yml：DSH 新会话选择器里的显示名与说明。 */
+function roleplayMetadata(): string {
+  return [
+    `name: '${ROLEPLAY_PRESET_NAME}'`,
+    "description: '独立的角色扮演会话：完整角色设定，无文件/命令权限，不影响工作会话。Independent roleplay session: full character prompt, no file or command access.'",
+    'order: 90',
+    '',
+  ].join('\n');
+}
+
+/** 内容不同才写文件：避免无谓改写 preset 的 mtime（DSH 以 mtime + size 判断是否需要重新挂载）。 */
+async function writeIfChanged(filePath: string, content: string): Promise<boolean> {
+  try {
+    if ((await readFile(filePath, 'utf8')) === content) return false;
+  } catch {
+    /* 不存在 / 不可读：照常写入 */
+  }
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, 'utf8');
+  return true;
+}
+
+/**
+ * 依据当前配置同步「角色空间」预设：
+ * - 开：写入 / 更新 agent.cordis.yml + preset.yml（内容变化才重写）。
+ * - 关：删除这两个文件，并尽量移除空目录（用 rmdir 而非递归删除，绝不误删用户放进该目录的东西）。
+ * @returns 同步后是否处于「已安装」状态。
+ */
+async function syncRoleplayPreset(): Promise<boolean> {
+  const config = await readConfig();
+  // 生效条件 = 主题总开关开 + 角色开关显式 true；其余一律视为关闭并清掉预设
+  // （缺失 / false / 总开关关闭都不会留下孤儿预设）。
+  if (config.enabled === false || config.roleplayEnabled !== true) {
+    await unlink(join(ROLEPLAY_PRESET_DIR, 'agent.cordis.yml')).catch(() => {});
+    await unlink(join(ROLEPLAY_PRESET_DIR, 'preset.yml')).catch(() => {});
+    await rmdir(ROLEPLAY_PRESET_DIR).catch(() => {});
+    return false;
+  }
+  const custom = (config.roleplayPersona || '').trim();
+  const persona = custom.length > 0 ? config.roleplayPersona : ROLEPLAY_PERSONA_DEFAULT;
+  await writeIfChanged(join(ROLEPLAY_PRESET_DIR, 'agent.cordis.yml'), roleplayComposition(persona));
+  await writeIfChanged(join(ROLEPLAY_PRESET_DIR, 'preset.yml'), roleplayMetadata());
+  return true;
+}
+
+/** syncRoleplayPreset 的安全包装：失败只记日志，绝不影响配置读写与设置页。 */
+async function syncRoleplaySafe(): Promise<boolean> {
+  try {
+    return await syncRoleplayPreset();
+  } catch (error) {
+    console.error('[xiao-theme] roleplay preset sync failed:', error);
+    return false;
+  }
+}
+
+/** 预设的两个文件是否都在（供设置页显示安装状态）。 */
+async function roleplayInstalled(): Promise<boolean> {
+  try {
+    await stat(join(ROLEPLAY_PRESET_DIR, 'agent.cordis.yml'));
+    await stat(join(ROLEPLAY_PRESET_DIR, 'preset.yml'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 写配置的 JSON body 合并（restoreDefaults 一键恢复默认）。 */
 async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unknown>): Promise<XiaoConfig> {
   if (body.restoreDefaults === true) return { ...HOST_DEFAULT_CONFIG };
@@ -490,6 +661,10 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
       typeof body.mascotSubtitle === 'string'
         ? body.mascotSubtitle
         : current.mascotSubtitle,
+    roleplayEnabled:
+      typeof body.roleplayEnabled === 'boolean' ? body.roleplayEnabled : current.roleplayEnabled,
+    roleplayPersona:
+      typeof body.roleplayPersona === 'string' ? body.roleplayPersona : current.roleplayPersona,
   };
 }
 
@@ -703,7 +878,12 @@ export function apply(ctx: HostCtx): void {
     );
   });
 
-  // 2) 配置路由 + 静态资源路由 + 上传路由
+  // 2) 角色空间（娱乐）：默认关闭；「主题总开关 + 角色开关」同时开启时才把角色 system prompt
+  //    同步为一个独立的 DSH agent preset，否则清掉该预设（老配置缺失字段 = 关闭，不会留下孤儿预设）。
+  //    与工作会话完全隔离——只有「新会话主动选择该预设」才会进入角色，工作会话不受影响。
+  void syncRoleplaySafe();
+
+  // 3) 配置路由 + 静态资源路由 + 上传路由
   ctx.inject(['webServer'], (httpCtx) => {
     // 配置 API：GET /xiao-theme/settings 读，POST /xiao-theme/settings 写（restoreDefaults=true 一键恢复默认）
     httpCtx.effect(
@@ -729,6 +909,8 @@ export function apply(ctx: HostCtx): void {
                     console.error('[xiao-theme] voice sync failed:', error);
                   }
                 }
+                // 角色文本 / 开关变化：同步 agent preset（内容变化才重写文件）。
+                await syncRoleplaySafe();
                 sendJson(res, 200, next);
               } catch (error) {
                 sendJson(res, 400, { error: requestError(req, error) });
@@ -985,8 +1167,83 @@ export function apply(ctx: HostCtx): void {
       'xiao-theme: open uploads folder route',
     );
 
+    // —— 角色空间（娱乐）：状态 / 重新应用 / 打开预设目录 ——
+    // 状态只读：告诉设置页 preset 是否已安装、装在哪，供用户去新会话里选择它。
+    httpCtx.effect(
+      () => {
+        const disposers: Array<() => void> = [];
+        disposers.push(
+          httpCtx.webServer.register({
+            kind: 'exact',
+            path: '/xiao-theme/roleplay',
+            handler: async (req, res) => {
+              if (req.method !== 'GET' && req.method !== 'HEAD') {
+                res.writeHead(405);
+                res.end();
+                return;
+              }
+              const config = await readConfig();
+              sendJson(res, 200, {
+                presetId: ROLEPLAY_PRESET_ID,
+                presetName: ROLEPLAY_PRESET_NAME,
+                masterEnabled: config.enabled !== false,
+                enabled: config.enabled !== false && config.roleplayEnabled === true,
+                installed: await roleplayInstalled(),
+                path: ROLEPLAY_PRESET_DIR.replace(/\\/g, '/'),
+              });
+            },
+          }),
+          // 重新应用：把当前角色文本重写成预设文件（用户手改过文件 / 想强制刷新时用）。
+          httpCtx.webServer.register({
+            kind: 'exact',
+            path: '/xiao-theme/roleplay-apply',
+            handler: async (req, res) => {
+              if (req.method !== 'POST') {
+                res.writeHead(405);
+                res.end();
+                return;
+              }
+              try {
+                const installed = await syncRoleplayPreset();
+                sendJson(res, 200, { ok: true, installed });
+              } catch (error) {
+                sendJson(res, 400, { ok: false, error: requestError(req, error) });
+              }
+            },
+          }),
+          // 用系统文件管理器打开预设目录（本机动作；失败时返回 path 供用户手动前往）。
+          httpCtx.webServer.register({
+            kind: 'exact',
+            path: '/xiao-theme/roleplay-open-folder',
+            handler: async (req, res) => {
+              if (req.method !== 'POST') {
+                res.writeHead(405);
+                res.end();
+                return;
+              }
+              try {
+                // 生效状态先按当前配置落盘一次，未生效时只建目录，保证打开的目录一定存在。
+                const config = await readConfig();
+                if (config.enabled !== false && config.roleplayEnabled === true) await syncRoleplayPreset();
+                else await mkdir(ROLEPLAY_PRESET_DIR, { recursive: true });
+                const ok = openFolder(ROLEPLAY_PRESET_DIR);
+                sendJson(res, 200, { ok, path: ROLEPLAY_PRESET_DIR.replace(/\\/g, '/') });
+              } catch {
+                sendJson(res, 200, { ok: false, path: ROLEPLAY_PRESET_DIR.replace(/\\/g, '/') });
+              }
+            },
+          }),
+        );
+        return () => {
+          for (const d of disposers) d();
+        };
+      },
+      'xiao-theme: roleplay routes',
+    );
+
     // —— 主题管理 API：列出 / 新建 / 切换 / 重命名 / 删除 / 导出 / 导入 ——
-    // 切换当前主题会改变当前配置，需同步重刷提示词（走系统提示注册表，不能被 /settings POST 覆盖才刷新）。
+    // 切换当前主题会改变当前配置，需同步重刷提示词（走系统提示注册表，不能被 /settings POST 覆盖才刷新）
+    // 以及「角色空间」预设（角色文本按主题各存一份）。
     const syncVoiceNow = async (): Promise<void> => {
       if (syncVoice !== null) {
         try {
@@ -995,6 +1252,7 @@ export function apply(ctx: HostCtx): void {
           console.error('[xiao-theme] voice sync failed:', error);
         }
       }
+      await syncRoleplaySafe();
     };
 
     const themeListCreateHandler: WebRouteHandler = async (req, res) => {

@@ -48,6 +48,19 @@ export interface XiaoConfig {
   mascotTitle: string;
   /** 吉祥物徽章副标（默认「别挡路」）。 */
   mascotSubtitle: string;
+  /**
+   * 娱乐功能「角色空间」开关：默认 false（一键开关）。
+   * 开启时把 roleplayPersona 写成一个独立的 DSH agent preset
+   * （~/.dsh/.agent-presets/xiao-roleplay/），供新会话选择；关闭时移除该预设。
+   * 受 enabled（主题总开关）约束：enabled=false 时不安装（并移除）预设——总开关关了，
+   * 这个功能就真的不生效，而不是"看得见但其实还开着"。
+   */
+  roleplayEnabled: boolean;
+  /**
+   * 角色会话的完整系统提示词（system prompt）。空字符串表示使用内置默认角色
+   * （英文「魈」设定）；改写成任意角色设定即可在同一预设下换角色。
+   */
+  roleplayPersona: string;
 }
 
 /** 主题列表里的一条摘要（不含完整配置）。 */
