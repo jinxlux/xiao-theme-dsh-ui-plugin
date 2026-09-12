@@ -33,6 +33,7 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   // 角色空间：**默认关闭**（老用户升级不会凭空多出一个 agent preset）；空字符串 = 使用 Host 内置的英文默认角色（魈）。
   roleplayEnabled: false,
   roleplayPersona: '',
+  roleplayNetwork: false,
 };
 const CLIENT_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
@@ -128,6 +129,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   // —— 角色空间（娱乐）——
   roleplaySection: { zh: '角色空间（娱乐）', en: 'Roleplay (entertainment)' },
   roleplayEnable: { zh: '启用角色空间', en: 'Enable roleplay' },
+  roleplayNetwork: { zh: '允许网络检索', en: 'Allow web lookup' },
+  roleplayNetworkHint: { zh: '开启后，角色会话会挂载 DSH 的网络工具（web_search / web_fetch），让角色开演前能先查最新的剧情、形象与设定；文件、命令、任务权限仍然没有。默认关闭。', en: 'When on, the roleplay session mounts DSH web tools (web_search / web_fetch) so the character can look up the latest plot, design and lore before playing; file, command and task access stay blocked. Off by default.' },
   roleplayPersona: { zh: '角色系统提示词', en: 'Roleplay system prompt' },
   roleplayPersonaPlaceholder: { zh: '留空使用内置的「魈」角色设定（英文）；填入任意角色的完整设定即可换角色。', en: 'Leave empty to use the built-in Xiao role (English); paste any full character prompt to switch roles.' },
   roleplayApply: { zh: '应用/更新预设', en: 'Apply / update preset' },
@@ -420,6 +423,8 @@ interface RoleplayStatus {
   presetId: string;
   presetName: string;
   enabled: boolean;
+  /** 预设当前是否挂了网络工具（Host 端 roleplayNetwork）。 */
+  network?: boolean;
   installed: boolean;
   path: string;
 }
@@ -1586,6 +1591,21 @@ function RoleplayGroup({ cfg, store }: { cfg: XiaoConfig; store: ConfigStore }):
         },
       }),
     ),
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement('label', { className: 'xiao-settings-label' }, t('roleplayNetwork')),
+      React.createElement('input', {
+        type: 'checkbox',
+        // 网络是运行时能力：只有角色空间真正生效（总开关 + 角色开关）时才可改。
+        checked: cfg.roleplayNetwork === true,
+        disabled: !enabled,
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+          void saveConfig(store, { roleplayNetwork: e.target.checked });
+        },
+      }),
+    ),
+    React.createElement('div', { className: 'xiao-settings-hint' }, t('roleplayNetworkHint')),
     React.createElement(
       'div',
       { className: 'xiao-settings-row xiao-settings-row-top' },

@@ -61,6 +61,14 @@ export interface XiaoConfig {
    * （英文「魈」设定）；改写成任意角色设定即可在同一预设下换角色。
    */
   roleplayPersona: string;
+  /**
+   * 角色会话的网络开关：默认 false（预设不额外挂工具行）。开启时在角色预设里多挂唯一一行
+   * 面向模型的网络工具（@deepseek-ai/dsh-tool-web，仅 web_search / web_fetch），
+   * 让角色开演前能检索最新的剧情、形象与设定；文件 / 命令 / 任务权限仍然没有。
+   * ⚠️ 只约束预设自己那层：host 面（profile 级）插件的工具在全局层，照样可见。
+   * 与 roleplayEnabled 一样受 enabled（主题总开关）门控。
+   */
+  roleplayNetwork: boolean;
 }
 
 /** 主题列表里的一条摘要（不含完整配置）。 */
