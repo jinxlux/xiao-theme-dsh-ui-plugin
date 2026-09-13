@@ -56,6 +56,25 @@ function xiaoLangHeader(): Record<string, string> {
   return { 'x-xiao-lang': currentLangZh() ? 'zh' : 'en' };
 }
 
+/**
+ * 吉祥物标题 / 副标的内置默认文案（随界面语言）。
+ * config 里持久化的仍是中文出厂默认（不改持久化格式，向后兼容）：显示时若值为空、或等于任一语言的
+ * 出厂默认，就按当前界面语言取默认文案；用户自定义过的文本原样显示。
+ */
+const MASCOT_DEFAULT_TEXT = {
+  zh: { title: '靖妖傩舞', subtitle: '别挡路' },
+  en: { title: 'Bane of All Evil', subtitle: 'Out of my way' },
+} as const;
+
+/** 要显示的吉祥物文案：出厂默认（或空）时随界面语言，否则用用户自定义文本。 */
+function mascotText(value: string | undefined, field: 'title' | 'subtitle'): string {
+  const raw = typeof value === 'string' ? value : '';
+  const d = MASCOT_DEFAULT_TEXT;
+  const isFactoryDefault = raw === '' || raw === d.zh[field] || raw === d.en[field];
+  if (!isFactoryDefault) return raw;
+  return currentLangZh() ? d.zh[field] : d.en[field];
+}
+
 /** 设置页 / 主题管理 / 徽章提示的文案字典（跟随 DSH 界面语言）。 */
 const STR: Record<string, { zh: string; en: string }> = {
   themeTitle: { zh: '魈主题', en: 'Xiao Theme' },
@@ -118,6 +137,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   importTheme: { zh: '导入主题', en: 'Import theme' },
   importThemePrefix: { zh: '导入主题 ', en: 'Imported theme ' },
   refresh: { zh: '刷新', en: 'Refresh' },
+  chooseFile: { zh: '选择文件', en: 'Choose file' },
+  saveFailed: { zh: '保存失败，已恢复为服务器上的设置', en: 'Save failed; reverted to the settings on the server' },
   needThemeName: { zh: '请输入主题名称', en: 'Please enter a theme name' },
   invalidImportFile: { zh: '无效的导入文件', en: 'Invalid import file' },
   importMissingConfig: { zh: '导入文件缺少 config', en: 'Import file is missing config' },
@@ -239,53 +260,142 @@ function createConfigStore(): ConfigStore {
   };
 }
 
-/** 从 Host 半读配置。 */
+/** 一条用户可见提示的小订阅容器（设置页展示一行 warn；写入成功时清空）。 */
+interface NoticeStore {
+  get(): string | null;
+  set(next: string | null): void;
+  subscribe(listener: () => void): () => void;
+}
+
+function createNoticeStore(): NoticeStore {
+  let value: string | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next) => {
+      if (next === value) return;
+      value = next;
+      for (const listener of [...listeners]) {
+        try {
+          listener();
+        } catch (error) {
+          console.error('[xiao-theme] notice listener failed:', error);
+        }
+      }
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+/** 保存失败提示（模块级单例：saveConfig 上报，设置页展示）。 */
+const saveError = createNoticeStore();
+
+/**
+ * 写入串行化 / 合并（纯优化，成功路径语义不变）：
+ * 同一时刻至多一个在途 POST；期间的多次改动只标脏，由当前循环再写一次「最新快照」，
+ * 避免高频改动（滑块 pointerup / blur）并发写、乱序覆盖。失败时回滚为服务器真值并给出可见提示。
+ */
+let saveDirty = false;
+let saveRun: Promise<void> | null = null;
+/** 上一次「服务器已确认」的背景 / 头像路径：只有真正变化才 +1 缓存指纹。 */
+let savedBgPath: string = CLIENT_DEFAULT_CONFIG.backgroundImagePath;
+let savedAvatarPath: string = CLIENT_DEFAULT_CONFIG.avatarPath;
+
+/** 用服务器返回值刷新缓存指纹基线（读取 / 保存成功 / 重置共用）。 */
+function rememberSavedPaths(cfg: XiaoConfig): void {
+  if (typeof cfg.backgroundImagePath === 'string') savedBgPath = cfg.backgroundImagePath;
+  if (typeof cfg.avatarPath === 'string') savedAvatarPath = cfg.avatarPath;
+}
+
+/** 从 Host 半读配置（同时用作保存失败后的回滚 / 重同步）。 */
 async function loadConfig(store: ConfigStore): Promise<void> {
   try {
     const response = await fetch('/xiao-theme/settings', { cache: 'no-store', headers: xiaoLangHeader() });
     if (!response.ok) return;
-    store.set((await response.json()) as XiaoConfig);
+    const cfg = (await response.json()) as XiaoConfig;
+    rememberSavedPaths(cfg);
+    store.set(cfg);
   } catch (error) {
     console.error('[xiao-theme] load settings failed:', error);
   }
 }
 
-/** 写配置到 Host 半，成功则以 Host 返回值为准更新 store。 */
-async function saveConfig(store: ConfigStore, patch: Partial<XiaoConfig>): Promise<void> {
-  const prevPath = store.getSnapshot().backgroundImagePath;
-  const prevAvatar = store.getSnapshot().avatarPath;
-  const next = { ...store.getSnapshot(), ...patch };
-  // 本地先更新，保证 UI 即时反馈；Host 返回值再校准
-  store.set(next);
-  try {
-    const response = await fetch('/xiao-theme/settings', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...xiaoLangHeader() },
-      body: JSON.stringify(next),
-    });
-    if (response.ok) {
-      const saved = (await response.json()) as XiaoConfig;
-      // 背景图路径变化：等配置真正写回后 +1 版本号，让背景 URL 变化并重新拉取，避免竞态拿到旧图。
-      if (saved.backgroundImagePath !== prevPath) bgVersion++;
-      // 头像路径变化同理：+1 版本号让徽章 <img> 的缓存指纹变化，避免上传后仍显示旧头像。
-      if (saved.avatarPath !== prevAvatar) avatarVersion++;
-      store.set(saved);
+/** 把待写改动落盘：串行 + 合并；失败则回滚为服务器真值并提示。 */
+function drainSaves(store: ConfigStore): Promise<void> {
+  if (saveRun !== null) return saveRun;
+  saveRun = (async () => {
+    try {
+      while (saveDirty) {
+        saveDirty = false;
+        const sent = store.getSnapshot();
+        let response: Response;
+        try {
+          response = await fetch('/xiao-theme/settings', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...xiaoLangHeader() },
+            body: JSON.stringify(sent),
+          });
+        } catch (error) {
+          saveDirty = false;
+          saveError.set(t('saveFailed') + ': ' + (error instanceof Error ? error.message : String(error)));
+          await loadConfig(store);
+          return;
+        }
+        if (!response.ok) {
+          saveDirty = false;
+          saveError.set(t('saveFailed') + ': ' + (await errorText(response)));
+          await loadConfig(store);
+          return;
+        }
+        let saved: XiaoConfig;
+        try {
+          saved = (await response.json()) as XiaoConfig;
+        } catch {
+          saved = sent;
+        }
+        // 背景 / 头像路径真正变化时 +1 版本号，让 URL 缓存指纹变化，避免竞态拿到旧图。
+        if (typeof saved.backgroundImagePath === 'string' && saved.backgroundImagePath !== savedBgPath) bgVersion++;
+        if (typeof saved.avatarPath === 'string' && saved.avatarPath !== savedAvatarPath) avatarVersion++;
+        rememberSavedPaths(saved);
+        saveError.set(null);
+        // 期间又产生新改动：这一份可能已过期，不用它覆盖刚做的乐观更新；下一轮写最新快照。
+        if (!saveDirty) store.set(saved);
+      }
+    } finally {
+      saveRun = null;
+      // 兜底：循环退出与标脏之间若有错过，补一次。
+      if (saveDirty) void drainSaves(store);
     }
-  } catch (error) {
-    console.error('[xiao-theme] save settings failed:', error);
-  }
+  })();
+  return saveRun;
+}
+
+/** 写配置到 Host 半：本地立即乐观更新，实际写入走串行化队列（返回排空该队列的 promise）。 */
+function saveConfig(store: ConfigStore, patch: Partial<XiaoConfig>): Promise<void> {
+  store.set({ ...store.getSnapshot(), ...patch });
+  saveDirty = true;
+  return drainSaves(store);
 }
 
 /** 把「当前主题」整体重置为出厂默认配置（Host 侧 restoreDefaults=true）。 */
 async function restoreConfig(store: ConfigStore): Promise<void> {
+  await drainSaves(store); // 先把排队中的写入落盘，避免与重置交错
   const response = await fetch('/xiao-theme/settings', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...xiaoLangHeader() },
     body: JSON.stringify({ restoreDefaults: true }),
   });
-  if (!response.ok) throw new Error('HTTP ' + response.status);
+  if (!response.ok) throw new Error(await errorText(response));
   const saved = (await response.json()) as XiaoConfig;
-  if (saved.backgroundImagePath !== store.getSnapshot().backgroundImagePath) bgVersion++;
+  if (typeof saved.backgroundImagePath === 'string' && saved.backgroundImagePath !== savedBgPath) bgVersion++;
+  if (typeof saved.avatarPath === 'string' && saved.avatarPath !== savedAvatarPath) avatarVersion++;
+  rememberSavedPaths(saved);
+  saveError.set(null);
   store.set(saved);
 }
 
@@ -409,11 +519,11 @@ async function deleteTheme(id: string): Promise<{ activeThemeId: string }> {
 async function exportTheme(id: string): Promise<ThemeExport> {
   return fetchJson<ThemeExport>('/xiao-theme/themes-export?id=' + encodeURIComponent(id), { cache: 'no-store' });
 }
-async function importTheme(name: string, config: XiaoConfig): Promise<ThemeSummary> {
+async function importTheme(name: string, config: XiaoConfig, version?: number): Promise<ThemeSummary> {
   return fetchJson<ThemeSummary>('/xiao-theme/themes-import', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name, config }),
+    body: JSON.stringify(typeof version === 'number' ? { name, config, version } : { name, config }),
   });
 }
 
@@ -801,11 +911,70 @@ interface DragState {
   moved: boolean;
 }
 
-/** 吉祥物徽章组件：青玉底金边 + 头像 + 可配置的标题/副标。 */
+/** 徽章位置 / 收起状态的本地持久化键（localStorage；仅本机，与插件配置文件无关）。 */
+const MASCOT_POS_KEY = 'xiao-theme:mascot-position';
+const MASCOT_HIDDEN_KEY = 'xiao-theme:mascot-hidden';
+
+/** 读取本地保存的徽章位置 / 收起状态；不可用或损坏返回 null（回落到 CSS 默认位置）。 */
+function readMascotStored(): { x: number; y: number; hidden: boolean } | null {
+  try {
+    const raw = window.localStorage.getItem(MASCOT_POS_KEY);
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw) as { x?: unknown; y?: unknown };
+    if (typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return null;
+    if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
+    return { x: parsed.x, y: parsed.y, hidden: window.localStorage.getItem(MASCOT_HIDDEN_KEY) === '1' };
+  } catch {
+    return null;
+  }
+}
+
+/** 写入徽章位置 / 收起状态；localStorage 不可用（隐私模式等）时静默忽略，不影响功能。 */
+function writeMascotStored(pos: { x: number; y: number } | null, hidden: boolean): void {
+  try {
+    if (pos === null) window.localStorage.removeItem(MASCOT_POS_KEY);
+    else window.localStorage.setItem(MASCOT_POS_KEY, JSON.stringify({ x: Math.round(pos.x), y: Math.round(pos.y) }));
+    window.localStorage.setItem(MASCOT_HIDDEN_KEY, hidden ? '1' : '0');
+  } catch {
+    /* 静默忽略 */
+  }
+}
+
+/** 吉祥物徽章组件：青玉底金边 + 头像 + 可配置的标题/副标（位置与收起状态本地持久化）。 */
 function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title: string; subtitle: string }): React.ReactElement {
-  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(() => {
+    const stored = readMascotStored();
+    return stored ? { x: stored.x, y: stored.y } : null;
+  });
   const [drag, setDrag] = React.useState<DragState | null>(null);
-  const [hidden, setHidden] = React.useState(false);
+  const [hidden, setHidden] = React.useState<boolean>(() => readMascotStored()?.hidden === true);
+
+  /** 把坐标钳制在视口内，避免徽章被拖出屏幕（元素尺寸未知时用保守兜底）。 */
+  const clampPos = (x: number, y: number): { x: number; y: number } => {
+    const el = rootRef.current;
+    const w = el && el.offsetWidth > 0 ? el.offsetWidth : 72;
+    const h = el && el.offsetHeight > 0 ? el.offsetHeight : 72;
+    return {
+      x: Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w)),
+      y: Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h)),
+    };
+  };
+
+  // 挂载后用真实尺寸校正一次持久化坐标（窗口变小 / 换屏幕时不会落在视口外）。
+  React.useEffect(() => {
+    setPos((p) => (p === null ? p : clampPos(p.x, p.y)));
+  }, []);
+  // 视口尺寸变化时重新钳制。
+  React.useEffect(() => {
+    const onResize = (): void => setPos((p) => (p === null ? p : clampPos(p.x, p.y)));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  // 位置 / 收起状态变化时持久化（失败静默）。
+  React.useEffect(() => {
+    writeMascotStored(pos, hidden);
+  }, [pos, hidden]);
 
   const startDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.button !== 0) return;
@@ -833,7 +1002,7 @@ function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title:
     const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4;
     if (moved) {
       setDrag({ ...drag, moved });
-      setPos({ x: drag.originLeft + dx, y: drag.originTop + dy });
+      setPos(clampPos(drag.originLeft + dx, drag.originTop + dy));
     }
   };
   const endDrag = (): void => setDrag(null);
@@ -864,7 +1033,7 @@ function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title:
     const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4;
     if (moved) {
       setDrag({ ...drag, moved });
-      setPos({ x: drag.originLeft + dx, y: drag.originTop + dy });
+      setPos(clampPos(drag.originLeft + dx, drag.originTop + dy));
     }
   };
   const tabUp = (): void => {
@@ -883,6 +1052,7 @@ function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title:
       {
         className: 'xiao-mascot',
         style: styleFor,
+        ref: rootRef,
         title: t('mascotDragOpen'),
       },
       React.createElement(
@@ -905,6 +1075,7 @@ function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title:
     {
       className: 'xiao-mascot',
       style: styleFor,
+      ref: rootRef,
       title: t('mascotDragClose'),
       onPointerDown: startDrag,
       onPointerMove: onMove,
@@ -949,8 +1120,8 @@ function XiaoOverlay({ store }: { store: ConfigStore }): React.ReactElement | nu
   if (snapshot.enabled === false) return null;
   return React.createElement(XiaoBadge, {
     avatarPath: snapshot.avatarPath || CLIENT_DEFAULT_CONFIG.avatarPath,
-    title: snapshot.mascotTitle || CLIENT_DEFAULT_CONFIG.mascotTitle,
-    subtitle: snapshot.mascotSubtitle || CLIENT_DEFAULT_CONFIG.mascotSubtitle,
+    title: mascotText(snapshot.mascotTitle, 'title'),
+    subtitle: mascotText(snapshot.mascotSubtitle, 'subtitle'),
   });
 }
 
@@ -1006,6 +1177,7 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
   const [busy, setBusy] = React.useState<boolean>(false);
   const [error, setError] = React.useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = React.useState<boolean>(false);
+  const importRef = React.useRef<HTMLInputElement | null>(null);
 
   const refresh = React.useCallback(async (): Promise<void> => {
     try {
@@ -1113,14 +1285,21 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
     setError(null);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as { name?: unknown; config?: unknown };
+      const parsed = JSON.parse(text) as { name?: unknown; config?: unknown; version?: unknown };
       if (parsed === null || typeof parsed !== 'object') throw new Error(t('invalidImportFile'));
       const name =
         typeof parsed.name === 'string' && parsed.name.trim().length > 0 ? parsed.name.trim() : '';
       if (parsed.config === null || typeof parsed.config !== 'object' || Array.isArray(parsed.config)) {
         throw new Error(t('importMissingConfig'));
       }
-      await importTheme(name || t('importThemePrefix') + ((themes ? themes.length : 0) + 1), parsed.config as XiaoConfig);
+      // 把导出文件里的版本号一并交给 Host 校验（旧文件没有该字段则不带）。
+      const version =
+        typeof parsed.version === 'number' && Number.isFinite(parsed.version) ? parsed.version : undefined;
+      await importTheme(
+        name || t('importThemePrefix') + ((themes ? themes.length : 0) + 1),
+        parsed.config as XiaoConfig,
+        version,
+      );
       await refresh();
     } catch (ex) {
       fail(ex);
@@ -1267,13 +1446,37 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
       'div',
       { className: 'xiao-settings-row' },
       React.createElement('label', { className: 'xiao-settings-label' }, t('importTheme')),
+      // 原生 file 控件的按钮与占位文字跟随「浏览器 UI 语言」（英文界面下仍显示「选择文件」），
+      // 故隐藏它、改用插件自己的按钮触发；文案随 DSH 界面语言。
       React.createElement('input', {
+        ref: importRef,
         className: 'xiao-settings-file',
         type: 'file',
         accept: '.json,application/json',
+        style: { display: 'none' },
         onChange: (e: React.ChangeEvent<HTMLInputElement>) => void onImportFile(e),
       }),
-      React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => void refresh() }, t('refresh')),
+      React.createElement(
+        'button',
+        {
+          className: 'xiao-settings-btn',
+          type: 'button',
+          onClick: () => {
+            if (importRef.current) importRef.current.click();
+          },
+        },
+        t('chooseFile'),
+      ),
+      React.createElement(
+        'button',
+        {
+          className: 'xiao-settings-btn',
+          type: 'button',
+          style: { marginLeft: 'auto' },
+          onClick: () => void refresh(),
+        },
+        t('refresh'),
+      ),
     ),
     ...(error ? [React.createElement('div', { className: 'xiao-settings-hint' }, error)] : []),
   );
@@ -1662,6 +1865,8 @@ function RoleplayGroup({ cfg, store }: { cfg: XiaoConfig; store: ConfigStore }):
 function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
+  const [saveErr, setSaveErr] = React.useState<string | null>(() => saveError.get());
+  React.useEffect(() => saveError.subscribe(() => setSaveErr(saveError.get())), []);
   const [pickerKind, setPickerKind] = React.useState<'bg' | 'avatar' | null>(null);
   const cfg = snapshot;
   const enabled = cfg.enabled !== false;
@@ -1677,6 +1882,9 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     typeof cfg.themeColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(cfg.themeColor)
       ? cfg.themeColor
       : DEFAULT_THEME_COLOR;
+  // 吉祥物文案按界面语言显示出厂默认（config 里仍存中文出厂默认，不改持久化格式）。
+  const mascotTitleShown = mascotText(cfg.mascotTitle, 'title');
+  const mascotSubtitleShown = mascotText(cfg.mascotSubtitle, 'subtitle');
 
   return React.createElement(
     'div',
@@ -1827,10 +2035,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
-          defaultValue: cfg.mascotTitle || CLIENT_DEFAULT_CONFIG.mascotTitle,
-          key: cfg.mascotTitle || 'default-title',
+          defaultValue: mascotTitleShown,
+          key: mascotTitleShown,
           onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
-            void saveConfig(store, { mascotTitle: e.target.value });
+            const next = e.target.value;
+            if (next !== mascotTitleShown) void saveConfig(store, { mascotTitle: next });
           },
         }),
       ),
@@ -1841,10 +2050,11 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
-          defaultValue: cfg.mascotSubtitle || CLIENT_DEFAULT_CONFIG.mascotSubtitle,
-          key: cfg.mascotSubtitle || 'default-subtitle',
+          defaultValue: mascotSubtitleShown,
+          key: mascotSubtitleShown,
           onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
-            void saveConfig(store, { mascotSubtitle: e.target.value });
+            const next = e.target.value;
+            if (next !== mascotSubtitleShown) void saveConfig(store, { mascotSubtitle: next });
           },
         }),
       ),
@@ -1997,6 +2207,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       { className: 'xiao-settings-hint' },
       t('settingsHint'),
     ),
+    saveErr !== null ? React.createElement('div', { className: 'xiao-settings-warn' }, saveErr) : null,
     pickerKind !== null
       ? React.createElement(UploadPicker, { kind: pickerKind, store, onClose: () => setPickerKind(null) })
       : null,
@@ -2054,7 +2265,9 @@ const XIAO_CSS: string[] = [
   '.xiao-settings-textarea{flex:1;min-width:0;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;line-height:1.5;}',
   '.xiao-settings-range{flex:1;min-width:0;accent-color:var(--dsw-alias-brand-primary);}',
   '.xiao-settings-value{font-size:12px;color:var(--dsw-alias-label-secondary);min-width:44px;text-align:right;flex:none;}',
-  '.xiao-settings-file{flex:1;min-width:0;font-size:13px;color:var(--dsw-alias-label-secondary);}',
+  // 该 class 现在挂在隐藏的原生 file input 上（导入行改为插件按钮触发），故规则无视觉效果，原样保留：
+  // 它原本修正了 flex:1 让原生控件整盒可点的问题；若将来重新显示原生控件，规则仍然适用。
+  '.xiao-settings-file{margin-right:auto;min-width:0;font-size:13px;color:var(--dsw-alias-label-secondary);}',
   '.xiao-settings-color{width:44px;height:44px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:none;cursor:pointer;flex:none;}',
   '.xiao-settings-color::-webkit-color-swatch-wrapper{padding:0;}',
   '.xiao-settings-color::-webkit-color-swatch{border:none;border-radius:50%;}',
@@ -2225,5 +2438,17 @@ function apply(ctx: ClientCtx): void {
   );
 }
 
-export { inject, apply };
+// 纯色板工具额外具名导出：仅供测试直接调用，不影响 ModuleLoader 契约（只读 inject/apply/default）。
+export {
+  inject,
+  apply,
+  parseHex,
+  rgbToHsl,
+  hslToRgb,
+  shiftLight,
+  shiftSat,
+  deriveSurfaces,
+  buildPalette,
+  mascotText,
+};
 export default { inject, apply } satisfies ClientPlugin;

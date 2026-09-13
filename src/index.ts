@@ -56,7 +56,8 @@ const UPLOAD_DIR =
 const AGENT_PRESET_ROOT = join(DSH_HOME, '.agent-presets');
 const ROLEPLAY_PRESET_ID = 'xiao-roleplay'; // 目录名，须匹配 [a-z0-9][a-z0-9-]*
 const ROLEPLAY_PRESET_DIR = join(AGENT_PRESET_ROOT, ROLEPLAY_PRESET_ID);
-const ROLEPLAY_PRESET_NAME = '角色空间（娱乐）'; // DSH 新会话选择器里显示的名字
+// DSH 新会话选择器里显示的名字：双语，中英界面都能对上（description 同样是中英双语）。
+const ROLEPLAY_PRESET_NAME = '角色空间（娱乐） / Roleplay (entertainment)';
 const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url)); // 插件根目录（lib 的上一级）
 const MAX_UPLOAD_AVATAR = 20 * 1024 * 1024; // 头像/图片保持原上限（<img>，无需大文件）
 const MAX_UPLOAD_BG = 200 * 1024 * 1024; // 背景（含视频）放宽：流式落盘后内存不再是瓶颈
@@ -112,8 +113,38 @@ interface ThemeEntry {
 
 /** 主题管理持久化形态（~/.dsh/xiao-theme.json）。 */
 interface ThemeStore {
+  /** 持久化格式版本：缺失视为 v1；每次写回都会盖上当前版本。 */
+  schemaVersion?: number;
   activeThemeId: string;
   themes: Record<string, ThemeEntry>;
+}
+
+/**
+ * 持久化格式的 schema 版本。将来做破坏性结构变更时 +1，并在 STORE_MIGRATIONS 里补一条迁移。
+ * 旧文件没有该字段 → 按 v1 处理。
+ */
+const SCHEMA_VERSION = 2;
+
+/**
+ * 版本迁移表：key = 起始版本，value = 升到 key+1 的迁移函数。
+ * v1 → v2 无结构变化——旧字段（backgroundOpacity / backgroundDarkOpacity）由 normalizeConfig
+ * 逐字段兜底，这里只把版本号推上去，为将来真正的结构迁移留一个显式入口。
+ */
+const STORE_MIGRATIONS: Record<number, (store: ThemeStore) => ThemeStore> = {
+  1: (store) => store,
+};
+
+/** 把存储迁移到当前 schema 版本（缺失版本号按 v1 处理），并原地补上版本号。 */
+function migrateThemeStore(store: ThemeStore): ThemeStore {
+  let version =
+    typeof store.schemaVersion === 'number' && Number.isFinite(store.schemaVersion) ? store.schemaVersion : 1;
+  while (version < SCHEMA_VERSION) {
+    const migrate = STORE_MIGRATIONS[version];
+    if (migrate) store = migrate(store);
+    version += 1;
+  }
+  store.schemaVersion = SCHEMA_VERSION;
+  return store;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -130,7 +161,7 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 /** 把任意配置对象规范化为合法 XiaoConfig（逐字段校验 + 兜底；含旧字段迁移 backgroundOpacity/… -> panelOpacity）。 */
-function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
+export function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
   const clamp = (value: unknown, min: number, max: number, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value)
       ? Math.min(max, Math.max(min, value))
@@ -292,6 +323,7 @@ async function readThemeStore(): Promise<ThemeStore> {
       },
     };
   }
+  store = migrateThemeStore(store);
   // 只缓存「确实读到了文件」的结果；文件缺失/损坏时的兜底默认值不缓存，保持逐次读盘的回落语义。
   themeStoreCache =
     value !== undefined && fingerprint !== null
@@ -300,10 +332,10 @@ async function readThemeStore(): Promise<ThemeStore> {
   return store;
 }
 
-/** 原子写回主题存储（确保目录存在）。写入后失效缓存，下一次读取仍从磁盘读出真实内容。 */
+/** 原子写回主题存储（确保目录存在）。写回时盖上当前 schema 版本；随后失效缓存，下一次读取仍从磁盘读出真实内容。 */
 async function writeThemeStore(store: ThemeStore): Promise<void> {
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
-  await writeFile(CONFIG_PATH, JSON.stringify(store, null, 2), 'utf8');
+  await writeFile(CONFIG_PATH, JSON.stringify({ ...store, schemaVersion: SCHEMA_VERSION }, null, 2), 'utf8');
   themeStoreCache = null;
 }
 
@@ -478,7 +510,7 @@ function streamUpload(
 }
 
 /** 校验视频容器签名与扩展名是否匹配（防止把 .mkv 改名成 .mp4 等）。仅校验视频；图片保持宽松。 */
-function videoFormatMatches(ext: string, header: Buffer): boolean {
+export function videoFormatMatches(ext: string, header: Buffer): boolean {
   if (header.length < 12) return false;
   if (/^\.mp4$/i.test(ext)) return header.toString('latin1', 4, 8) === 'ftyp';
   if (/^\.mov$/i.test(ext) || /^\.m4v$/i.test(ext)) {
@@ -506,6 +538,10 @@ const HOST_ERR = {
   themeNotFound: { zh: '未找到主题', en: 'Theme not found' },
   defaultNotDeletable: { zh: '默认主题不可删除', en: 'The default theme cannot be deleted' },
   configRequired: { zh: '导入数据缺少 config', en: 'Import data is missing config' },
+  themeVersionTooNew: {
+    zh: '该主题文件由更新版本的插件生成，请先升级插件再导入',
+    en: 'This theme file was created by a newer plugin version; update the plugin before importing',
+  },
   emptyUpload: { zh: '上传内容为空', en: 'Empty upload' },
   fileTooLarge: { zh: '文件过大', en: 'File too large' },
   unsupportedFormat: {
@@ -561,7 +597,7 @@ function contentTypeFor(pathValue: string): string {
 }
 
 /** 解析 HTTP Range 头（bytes=start-end / bytes=start- / bytes=-suffix）；非法或不可满足返回 null（按完整文件返回）。 */
-function parseRange(range: string | undefined, size: number): { start: number; end: number } | null {
+export function parseRange(range: string | undefined, size: number): { start: number; end: number } | null {
   if (!range || size <= 0) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
   if (!m) return null;
@@ -679,7 +715,7 @@ function roleplayPersonaText(config: XiaoConfig): string {
  * 用显式缩进指示符（`|2-`）配合固定的 6 空格内容缩进，所以「首行缩进即块缩进」的自动探测
  * 不再生效：换行、冒号、引号、井号、前导空格都能原样保留，既不转义也不可能撑破 YAML。
  */
-function yamlLiteralBlock(text: string, indent: string): string {
+export function yamlLiteralBlock(text: string, indent: string): string {
   const clean = text
     .replace(/\r\n?/g, '\n')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
@@ -896,7 +932,7 @@ function requestedUploadExt(req: IncomingMessage): string {
  * 仅识别 GIF87a/GIF89a，并统计图形控制扩展（GCE，0x21 0xF9 0x04）数量：
  * 动图必然 ≥2 个（每帧一个），静态/单帧 GIF 至多 1 个；非 GIF 直接 false。
  */
-function isAnimatedGif(buf: Buffer): boolean {
+export function isAnimatedGif(buf: Buffer): boolean {
   if (buf.length < 6) return false;
   if (buf.toString('latin1', 0, 3) !== 'GIF') return false;
   let gce = 0;
@@ -1592,7 +1628,7 @@ export function apply(ctx: HostCtx): void {
         }
         const payload: ThemeExport = {
           framework: 'xiao-theme-ts',
-          version: 1,
+          version: SCHEMA_VERSION,
           name: entry.name,
           config: normalizeConfig(entry.config as unknown as Record<string, unknown>),
         };
@@ -1614,6 +1650,13 @@ export function apply(ctx: HostCtx): void {
         const configRaw = body.config;
         if (configRaw === null || typeof configRaw !== 'object' || Array.isArray(configRaw)) {
           sendJson(res, 400, { error: HOST_ERR.configRequired[langFromReq(req)] });
+          return;
+        }
+        // 导入版本校验：来自更新版本的文件直接拒绝；缺省视为当前版本（兼容旧导出与旧客户端）。
+        const declaredVersion =
+          typeof body.version === 'number' && Number.isFinite(body.version) ? body.version : SCHEMA_VERSION;
+        if (declaredVersion > SCHEMA_VERSION) {
+          sendJson(res, 400, { error: HOST_ERR.themeVersionTooNew[langFromReq(req)] });
           return;
         }
         const store = await readThemeStore();
