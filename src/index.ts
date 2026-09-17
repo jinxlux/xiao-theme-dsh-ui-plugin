@@ -12,7 +12,7 @@ import { dirname, join, resolve, basename, extname, relative, isAbsolute } from 
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { VoiceLanguage, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
+import type { BackgroundEntry, VoiceLanguage, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
 import type { HostCtx, WebRouteHandler } from './host.types';
 
 /**
@@ -76,6 +76,10 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   backgroundImagePath: 'resource/avatar.png',
   backgroundDynamic: false,
   backgroundVideoAudio: false,
+  // 多背景：默认空列表 = 由 backgroundImagePath/backgroundDynamic 合成的单张（与旧版完全一致）。
+  backgroundList: [],
+  // 轮播间隔（秒）：仅在列表长度 ≥ 2 时生效。
+  backgroundInterval: 30,
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
@@ -93,6 +97,7 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
 };
 const HOST_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
+  backgroundInterval: { min: 2, max: 600 },
   panelOpacity: { min: 0.3, max: 0.9 },
   sidebarOpacity: { min: 0, max: 1 },
 } as const;
@@ -160,12 +165,43 @@ const MIME_BY_EXT: Record<string, string> = {
   '.m4v': 'video/x-m4v',
 };
 
+/**
+ * 规范化多背景列表：只保留 { path: 非空字符串, dynamic: boolean }，按路径去重（保留首次出现），
+ * 非法项（null / 非对象 / path 空）直接丢弃。始终返回新数组，绝不把外部引用带进配置。
+ * 导出供单测直接调用。
+ */
+export function normalizeBackgroundList(raw: unknown): BackgroundEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BackgroundEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const path = typeof o.path === 'string' ? o.path.trim() : '';
+    if (path.length === 0 || seen.has(path)) continue;
+    seen.add(path);
+    out.push({ path, dynamic: o.dynamic === true });
+  }
+  return out;
+}
+
 /** 把任意配置对象规范化为合法 XiaoConfig（逐字段校验 + 兜底；含旧字段迁移 backgroundOpacity/… -> panelOpacity）。 */
 export function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
   const clamp = (value: unknown, min: number, max: number, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value)
       ? Math.min(max, Math.max(min, value))
       : fallback;
+  // 多背景：显式列表优先；缺失 / 为空 / 全非法时由单张旧字段合成一个只有一项的列表 ——
+  // 老配置、老导出因此零迁移即可照常工作，且长度恒 ≥ 1。
+  const legacyImagePath =
+    typeof parsed.backgroundImagePath === 'string' && parsed.backgroundImagePath.length > 0
+      ? parsed.backgroundImagePath
+      : HOST_DEFAULT_CONFIG.backgroundImagePath;
+  const legacyDynamic = parsed.backgroundDynamic === true;
+  const backgroundList = normalizeBackgroundList(parsed.backgroundList);
+  if (backgroundList.length === 0) backgroundList.push({ path: legacyImagePath, dynamic: legacyDynamic });
+  // 第 0 项是「旧字段」的投影：backgroundImagePath/backgroundDynamic 始终与之一致。
+  const primary = backgroundList[0]!;
   return {
     enabled: parsed.enabled !== false,
     voiceEnabled: parsed.voiceEnabled !== false,
@@ -181,12 +217,16 @@ export function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
           : HOST_DEFAULT_CONFIG.voiceLanguage,
     voicePrompt: typeof parsed.voicePrompt === 'string' ? parsed.voicePrompt : HOST_DEFAULT_CONFIG.voicePrompt,
     backgroundEnabled: parsed.backgroundEnabled !== false,
-    backgroundImagePath:
-      typeof parsed.backgroundImagePath === 'string' && parsed.backgroundImagePath.length > 0
-        ? parsed.backgroundImagePath
-        : HOST_DEFAULT_CONFIG.backgroundImagePath,
-    backgroundDynamic: parsed.backgroundDynamic === true,
+    backgroundImagePath: primary.path,
+    backgroundDynamic: primary.dynamic,
     backgroundVideoAudio: parsed.backgroundVideoAudio === true,
+    backgroundList,
+    backgroundInterval: clamp(
+      parsed.backgroundInterval,
+      HOST_RANGES.backgroundInterval.min,
+      HOST_RANGES.backgroundInterval.max,
+      HOST_DEFAULT_CONFIG.backgroundInterval,
+    ),
     backgroundBlur: clamp(
       parsed.backgroundBlur,
       HOST_RANGES.backgroundBlur.min,
@@ -845,11 +885,34 @@ async function roleplayInstalled(): Promise<boolean> {
 
 /** 写配置的 JSON body 合并（restoreDefaults 一键恢复默认）。 */
 async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unknown>): Promise<XiaoConfig> {
-  if (body.restoreDefaults === true) return { ...HOST_DEFAULT_CONFIG };
+  // 恢复默认：经 normalizeConfig 产出，保证 backgroundList 等新字段同样被合成（与 GET 读到的形态一致）。
+  if (body.restoreDefaults === true) return normalizeConfig({});
   const clampNum = (value: unknown, min: number, max: number): number | null =>
     typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : null;
   const pickLanguage = (value: unknown): VoiceLanguage | null =>
     value === 'zh' ? 'zh' : value === 'en' ? 'en' : null;
+  // 多背景合并（三种来源，互斥优先）：
+  //   1) 请求带了合法列表 → 以它为准（当前客户端每次都会发全量配置，走这条）；
+  //   2) 否则只带了单张路径 → 只更新列表首项（兼容旧客户端 / 只改 backgroundImagePath 的旧交互）；
+  //   3) 都没有 → 沿用当前列表（缺失时由当前单张字段合成）。
+  const bodyList = normalizeBackgroundList(body.backgroundList);
+  const currentList =
+    Array.isArray(current.backgroundList) && current.backgroundList.length > 0
+      ? current.backgroundList.map((entry) => ({ path: entry.path, dynamic: entry.dynamic === true }))
+      : [{ path: current.backgroundImagePath, dynamic: current.backgroundDynamic }];
+  let nextList: BackgroundEntry[];
+  if (bodyList.length > 0) {
+    nextList = bodyList;
+  } else if (typeof body.backgroundImagePath === 'string' && body.backgroundImagePath.length > 0) {
+    nextList = currentList;
+    nextList[0] = {
+      path: body.backgroundImagePath,
+      dynamic: typeof body.backgroundDynamic === 'boolean' ? body.backgroundDynamic : nextList[0]!.dynamic,
+    };
+  } else {
+    nextList = currentList;
+  }
+  const primary = nextList[0]!;
   return {
     enabled: typeof body.enabled === 'boolean' ? body.enabled : current.enabled,
     voiceEnabled: typeof body.voiceEnabled === 'boolean' ? body.voiceEnabled : current.voiceEnabled,
@@ -861,18 +924,16 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
     voicePrompt: typeof body.voicePrompt === 'string' ? body.voicePrompt : current.voicePrompt,
     backgroundEnabled:
       typeof body.backgroundEnabled === 'boolean' ? body.backgroundEnabled : current.backgroundEnabled,
-    backgroundImagePath:
-      typeof body.backgroundImagePath === 'string' && body.backgroundImagePath.length > 0
-        ? body.backgroundImagePath
-        : current.backgroundImagePath,
-    backgroundDynamic:
-      typeof body.backgroundDynamic === 'boolean'
-        ? body.backgroundDynamic
-        : current.backgroundDynamic,
+    backgroundImagePath: primary.path,
+    backgroundDynamic: primary.dynamic,
     backgroundVideoAudio:
       typeof body.backgroundVideoAudio === 'boolean'
         ? body.backgroundVideoAudio
         : current.backgroundVideoAudio,
+    backgroundList: nextList,
+    backgroundInterval:
+      clampNum(body.backgroundInterval, HOST_RANGES.backgroundInterval.min, HOST_RANGES.backgroundInterval.max) ??
+      current.backgroundInterval,
     backgroundBlur:
       clampNum(body.backgroundBlur, HOST_RANGES.backgroundBlur.min, HOST_RANGES.backgroundBlur.max) ??
       current.backgroundBlur,
@@ -981,6 +1042,15 @@ function uploadUsedBy(store: ThemeStore): Map<string, { themes: string[]; active
       if (isActive) rec.active = true;
       map.set(name, rec);
     };
+    // 多背景：列表每一项都算引用（单张配置下列表由旧字段合成，push 幂等，结果与旧版完全一致）。
+    const bgList = (entry.config as unknown as { backgroundList?: unknown }).backgroundList;
+    if (Array.isArray(bgList)) {
+      for (const item of bgList) {
+        if (item !== null && typeof item === 'object') {
+          push((item as { path?: unknown }).path as string | undefined);
+        }
+      }
+    }
     push(entry.config.backgroundImagePath);
     push(entry.config.avatarPath);
   }
@@ -1204,7 +1274,28 @@ export function apply(ctx: HostCtx): void {
               res.end();
               return;
             }
-            const filePath = resolveAssetPath(config.backgroundImagePath);
+            // 多背景：`?p=` 精确匹配列表中的某一项（客户端总是带上它，可避免乐观更新期间下标错位），
+            // 匹配不到再退回 `?i=` 下标；两者都非法 / 越界 / 缺失时一律回落到第 0 项（旧 URL 行为不变）。
+            // 安全：只用于在「配置内的列表」里取路径，绝不接受调用方直接传任意路径 —— 避免任意文件读取。
+            const list =
+              Array.isArray(config.backgroundList) && config.backgroundList.length > 0
+                ? config.backgroundList
+                : [{ path: config.backgroundImagePath, dynamic: config.backgroundDynamic }];
+            let index = 0;
+            const rawPath = queryParam(req, 'p');
+            const pathIndex = rawPath === null ? -1 : list.findIndex((item) => item.path === rawPath);
+            if (pathIndex >= 0) {
+              index = pathIndex;
+            } else {
+              const rawIndex = queryParam(req, 'i');
+              if (rawIndex !== null) {
+                const parsedIndex = Number.parseInt(rawIndex, 10);
+                if (Number.isInteger(parsedIndex) && parsedIndex >= 0 && parsedIndex < list.length) {
+                  index = parsedIndex;
+                }
+              }
+            }
+            const filePath = resolveAssetPath(list[index]!.path);
             try {
               const st = await stat(filePath);
               // 视频/大文件支持 Range：浏览器可先播头部再流式续传、可拖动进度；不带 Range 时仍回完整文件（200）。

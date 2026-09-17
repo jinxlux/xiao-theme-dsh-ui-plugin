@@ -98,3 +98,19 @@ test('buildPalette', () => {
     assert.equal(typeof p[k].dark, 'string');
   }
 });
+
+test('videoPlaythroughPlan: switch time = max(interval, duration)', () => {
+  // interval shorter than the clip -> must play to the end
+  assert.deepEqual(mod.videoPlaythroughPlan(3000, 10000), { loop: false, waitForEnded: true, switchAfterMs: 10000 });
+  // interval longer than the clip -> loop until the timer
+  assert.deepEqual(mod.videoPlaythroughPlan(30000, 10000), { loop: true, waitForEnded: false, switchAfterMs: 30000 });
+  // equal -> play to the end
+  assert.deepEqual(mod.videoPlaythroughPlan(10000, 10000), { loop: false, waitForEnded: true, switchAfterMs: 10000 });
+  // unknown / non-finite duration -> timer only
+  assert.deepEqual(mod.videoPlaythroughPlan(5000, null), { loop: true, waitForEnded: false, switchAfterMs: 5000 });
+  assert.deepEqual(mod.videoPlaythroughPlan(5000, Number.POSITIVE_INFINITY), {
+    loop: true,
+    waitForEnded: false,
+    switchAfterMs: 5000,
+  });
+});

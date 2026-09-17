@@ -7,7 +7,7 @@
  * 构建时由 tsc 产出 ModuleLoader 兼容的 CommonJS，再由 scripts/wrap-client.mjs 包裹。
  */
 import * as React from 'react';
-import type { XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
+import type { BackgroundEntry, XiaoConfig, ThemeSummary, ThemeListResponse, ThemeActivateResponse, ThemeExport, UploadEntry, UploadListResponse } from './config';
 import type { ClientCtx, ClientPlugin, ThemeTokenValue } from './client.types';
 
 /**
@@ -24,6 +24,9 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   backgroundImagePath: 'resource/avatar.png',
   backgroundDynamic: false,
   backgroundVideoAudio: false,
+  // 多背景：默认空列表 = 由 backgroundImagePath/backgroundDynamic 合成的单张（与旧版完全一致）。
+  backgroundList: [],
+  backgroundInterval: 30,
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
@@ -37,6 +40,7 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
 };
 const CLIENT_RANGES = {
   backgroundBlur: { min: 0, max: 60 },
+  backgroundInterval: { min: 2, max: 600 },
   panelOpacity: { min: 0.3, max: 0.9 },
   sidebarOpacity: { min: 0, max: 1 },
 } as const;
@@ -117,7 +121,22 @@ const STR: Record<string, { zh: string; en: string }> = {
   useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
   useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
   videoAudio: { zh: '视频背景声音', en: 'Background video audio' },
-  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片/视频（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图或 MP4/WebM 视频会自动识别为动态背景（视频背景可在下方选择是否播放声音）；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image or video (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF or MP4/WebM video is auto-detected as a dynamic background (video backgrounds can optionally play sound below); static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading.' },
+  // —— 多背景轮播 ——
+  bgPathFirstMulti: { zh: '背景图路径（第 1 项）', en: 'Background path (item 1)' },
+  bgListTitle: { zh: '多背景轮播', en: 'Multi-background rotation' },
+  bgAddFromUploads: { zh: '从已上传文件添加', en: 'Add from uploads' },
+  bgDynamicTag: { zh: '动态', en: 'Dynamic' },
+  bgStaticTag: { zh: '静态', en: 'Static' },
+  bgPickerAddTitle: { zh: '选择要加入轮播的背景', en: 'Choose backgrounds to add' },
+  bgAlreadyAdded: { zh: '已添加', en: 'Added' },
+  uploadsDone: { zh: '完成', en: 'Done' },
+  bgRemove: { zh: '移除', en: 'Remove' },
+  bgMoveUp: { zh: '上移', en: 'Move up' },
+  bgMoveDown: { zh: '下移', en: 'Move down' },
+  bgInterval: { zh: '切换间隔', en: 'Switch interval' },
+  bgAddDuplicate: { zh: '该文件已在列表中', en: 'Already in the list' },
+  bgListHint: { zh: '列表 ≥ 2 项时按上方「切换间隔」轮播：静态图与 GIF 到点即切；视频在「间隔 ≤ 时长」时播完才切、「间隔 > 时长」时循环播到点再切。切换用固定约 0.7 秒的交叉渐变。只有 1 项时与旧版单背景完全一致。', en: 'With 2+ items the list rotates at the "Switch interval" above: static images and GIFs switch on the timer; a video is always played to the end when the interval is shorter than it, and loops until the timer when the interval is longer. Switching uses a fixed ~0.7s cross-fade. With a single item, behaviour is exactly the old single background.' },
+  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片/视频（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图或 MP4/WebM 视频会自动识别为动态背景（视频背景可在下方选择是否播放声音）；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。背景支持多张轮播：在上方列表里添加第 2 张起即进入轮播，切换间隔可调。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image or video (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF or MP4/WebM video is auto-detected as a dynamic background (video backgrounds can optionally play sound below); static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading. Multiple backgrounds rotate: add a second item in the list above to start rotating, with an adjustable interval.' },
   themeManager: { zh: '主题管理', en: 'Theme management' },
   themeManagerHint: { zh: '所有设置修改都会自动保存为当前主题修改。如果想创建新主题，请用「另存为新主题」创建，再在新主题下修改，才不会覆盖现在这个主题的设置。', en: 'All setting changes are automatically saved to the current theme. To create a new theme, use "Save as new theme" first, then edit under that new theme so you don\'t overwrite the current theme\'s settings.' },
   currentTheme: { zh: '当前主题', en: 'Current theme' },
@@ -134,6 +153,11 @@ const STR: Record<string, { zh: string; en: string }> = {
   confirmDelete: { zh: '确认删除', en: 'Confirm delete' },
   builtinSuffix: { zh: '（内置）', en: ' (built-in)' },
   activeSuffix: { zh: '（当前）', en: ' (active)' },
+  themeListTitle: { zh: '主题列表', en: 'Theme list' },
+  activeTag: { zh: '当前', en: 'Active' },
+  builtinTag: { zh: '内置', en: 'Built-in' },
+  useTheme: { zh: '使用', en: 'Use' },
+  useThemeHint: { zh: '切换为当前主题', en: 'Switch to this theme' },
   importTheme: { zh: '导入主题', en: 'Import theme' },
   importThemePrefix: { zh: '导入主题 ', en: 'Imported theme ' },
   refresh: { zh: '刷新', en: 'Refresh' },
@@ -375,9 +399,30 @@ function drainSaves(store: ConfigStore): Promise<void> {
   return saveRun;
 }
 
+/**
+ * 保持「单张旧字段」与「多背景列表首项」一致 —— 它们是同一份数据的两种读法。
+ * - patch 显式带了 backgroundList → 用其首项回写 backgroundImagePath / backgroundDynamic；
+ * - patch 只带单张字段（旧交互：选择/上传背景、手动改路径）→ 只更新列表首项，其余项保留；
+ * - 两者都没带 → 原样返回。
+ * 这样旧的单张控件无需改动，就能在多背景下正确修改「第 1 张」，而不会让轮播列表失同步。
+ */
+function withBackgroundMirror(next: XiaoConfig, patch: Partial<XiaoConfig>): XiaoConfig {
+  const hasList = Object.prototype.hasOwnProperty.call(patch, 'backgroundList');
+  const hasSingle =
+    Object.prototype.hasOwnProperty.call(patch, 'backgroundImagePath') ||
+    Object.prototype.hasOwnProperty.call(patch, 'backgroundDynamic');
+  if (!hasList && !hasSingle) return next;
+  const list = effectiveBackgroundList(next).map((entry) => ({ ...entry }));
+  if (hasSingle && !hasList) {
+    list[0] = { path: next.backgroundImagePath, dynamic: next.backgroundDynamic === true };
+  }
+  const first = list[0]!;
+  return { ...next, backgroundList: list, backgroundImagePath: first.path, backgroundDynamic: first.dynamic };
+}
+
 /** 写配置到 Host 半：本地立即乐观更新，实际写入走串行化队列（返回排空该队列的 promise）。 */
 function saveConfig(store: ConfigStore, patch: Partial<XiaoConfig>): Promise<void> {
-  store.set({ ...store.getSnapshot(), ...patch });
+  store.set(withBackgroundMirror({ ...store.getSnapshot(), ...patch }, patch));
   saveDirty = true;
   return drainSaves(store);
 }
@@ -414,7 +459,8 @@ async function errorText(response: Response): Promise<string> {
  * 上传背景图/视频到 Host，成功后把返回路径写入配置。
  * 返回 null 表示成功；否则返回用户可见的错误信息（来自 Host 的本地化 error 字段）。
  */
-async function uploadBackground(store: ConfigStore, file: File): Promise<string | null> {
+/** 上传背景文件，返回 Host 给出的路径与动态标记（只上传、不写配置，由调用方决定用途）。 */
+async function uploadBackgroundFile(file: File): Promise<{ path: string; dynamic: boolean } | { error: string }> {
   const match = /\.([a-zA-Z0-9]+)$/.exec(file.name || '');
   const ext = match ? match[1]!.toLowerCase() : 'png';
   try {
@@ -425,21 +471,30 @@ async function uploadBackground(store: ConfigStore, file: File): Promise<string 
     });
     if (!response.ok) {
       console.error('[xiao-theme] upload failed:', response.status);
-      return await errorText(response);
+      return { error: await errorText(response) };
     }
     const data = (await response.json()) as { imagePath?: unknown; dynamic?: unknown };
     if (data && typeof data.imagePath === 'string' && data.imagePath.length > 0) {
-      const patch: Partial<XiaoConfig> = { backgroundImagePath: data.imagePath };
       // Host 已自动识别是否为动态背景：动画 GIF / 视频 => dynamic=true；静态图/单帧 GIF => false。
-      if (typeof data.dynamic === 'boolean') patch.backgroundDynamic = data.dynamic;
-      await saveConfig(store, patch);
-      return null;
+      return { path: data.imagePath, dynamic: data.dynamic === true };
     }
-    return 'HTTP ' + response.status;
+    return { error: 'HTTP ' + response.status };
   } catch (error) {
     console.error('[xiao-theme] upload failed:', error);
-    return error instanceof Error && error.message ? error.message : 'Upload failed';
+    return { error: error instanceof Error && error.message ? error.message : 'Upload failed' };
   }
+}
+
+/**
+ * 上传背景图/视频到 Host，成功后把返回路径写入配置（替换「第 1 张」背景；多背景下其余项保留）。
+ * 返回 null 表示成功；否则返回用户可见的错误信息（来自 Host 的本地化 error 字段）。
+ */
+async function uploadBackground(store: ConfigStore, file: File): Promise<string | null> {
+  const result = await uploadBackgroundFile(file);
+  if ('error' in result) return result.error;
+  const patch: Partial<XiaoConfig> = { backgroundImagePath: result.path, backgroundDynamic: result.dynamic };
+  await saveConfig(store, patch);
+  return null;
 }
 
 /** 上传头像图到 Host，成功后把返回的路径写入配置（头像无“动态背景”概念，只取 imagePath）。返回 null=成功，否则返回错误信息。 */
@@ -466,6 +521,26 @@ async function uploadAvatar(store: ConfigStore, file: File): Promise<string | nu
     console.error('[xiao-theme] avatar upload failed:', error);
     return error instanceof Error && error.message ? error.message : 'Upload failed';
   }
+}
+
+/** 取路径的文件名部分（用于列表展示；同时兼容 \\ 与 / 分隔）。 */
+function shortBgName(pathValue: string): string {
+  const parts = pathValue.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || pathValue;
+}
+
+/**
+ * 背景列表行的缩略图地址：
+ * - 上传目录内的文件走 uploads-file（不依赖「启用磨砂背景」，把背景关掉也能看到预览）；
+ * - 其余（插件内置 resource/…、本机绝对路径）走 /xiao-bg 的对应列表项。
+ */
+function bgThumbUrl(entry: BackgroundEntry, index: number): string {
+  const normalized = entry.path.replace(/\\/g, '/');
+  const name = shortBgName(entry.path);
+  if (normalized.indexOf('xiao-theme-uploads') >= 0 && name.length > 0) {
+    return '/xiao-theme/uploads-file?name=' + encodeURIComponent(name);
+  }
+  return '/xiao-bg?i=' + index + '&p=' + encodeURIComponent(entry.path) + '&v=' + bgVersion;
 }
 
 /** 通用 JSON fetch：非 2xx 抛出带 error 文本的异常。 */
@@ -707,11 +782,61 @@ function syncBgVideo(cfg: XiaoConfig, active: boolean): void {
 }
 
 /**
- * 按配置应用 / 更新 / 移除整页磨砂背景。
+ * 写入磨砂背景的「公共视觉层」：模糊强度、主色渐变、面板 / 侧栏不透明度变量，以及根框架的
+ * inline 兜底（CSS 选择器未命中时仍能透出并模糊）。单张背景与多背景轮播共用，因此每次配置变更
+ * 都会调用 —— 拖滑杆 / 切明暗主题即时生效。不含路径、<video> 与图层本身（那些各自负责）。
+ */
+function applyBackgroundChrome(cfg: XiaoConfig): void {
+  const de = document.documentElement;
+  const blur = clampNum(typeof cfg.backgroundBlur === 'number' ? cfg.backgroundBlur : 22, 0, 60, 22);
+  // 统一的不透明度：浅色/深色共用同一 alpha（封顶 0.9 保证背景图恒可见），仅 RGB 底色随主题区分。
+  const p = clamp01(typeof cfg.panelOpacity === 'number' ? cfg.panelOpacity : 0.5);
+  const ovl = Math.min(p, PANEL_OPACITY_MAX);
+  // 侧栏独立不透明度：允许到 1.0（sidebar 可完全 100% 不透明），与主面板 0.9 封顶解耦。
+  const so = clamp01(typeof cfg.sidebarOpacity === 'number' ? cfg.sidebarOpacity : 0.85);
+  // 面板/侧栏底色的浅深 RGB 随主题主色派生。
+  const surf = deriveSurfaces(typeof cfg.themeColor === 'string' ? cfg.themeColor : DEFAULT_THEME_COLOR);
+  const [lr, lg, lb] = surf.light;
+  const [dr, dg, db] = surf.dark;
+  const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
+  de.classList.add('xiao-bg-on');
+  de.style.setProperty('--xiao-bg-blur', blur + 'px');
+  // 背景渐变随主色：中段 = 主色，两端为同色暗/亮。
+  de.style.setProperty('--xiao-theme-color', themeColor);
+  de.style.setProperty('--xiao-grad-a', shiftLight(themeColor, -44));
+  de.style.setProperty('--xiao-grad-b', shiftLight(themeColor, -30));
+  de.style.setProperty('--xiao-bg-ovl', rgba(lr, lg, lb, ovl));
+  de.style.setProperty('--xiao-bg-ovl-dark', rgba(dr, dg, db, ovl));
+  // 侧栏杆：浅色/深色各一个变量，由 CSS 属性选择器套到 sidebarCol/detailsCol 上。
+  de.style.setProperty('--xiao-sidebar-ovl', rgba(lr, lg, lb, so));
+  de.style.setProperty('--xiao-sidebar-ovl-dark', rgba(dr, dg, db, so));
+  // 右栏面板内部的语义 token 覆盖值（见 XIAO_CSS 的 [data-sidebar-right-panel] 规则）：面板内的
+  // tab 条/卡片走 --dsw-alias-bg-layer-1/2/3，比面板底色略实一点，既保住内容可读性，又让整体
+  // 仍随侧栏不透明度单调变化（so=0 近全透、so=1 完全不透明）。不设 0.25 之类下限，否则拖到 0 也不透。
+  de.style.setProperty('--xiao-sidebar-ovl-l1', rgba(lr, lg, lb, Math.min(so + 0.04, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-l2', rgba(lr, lg, lb, Math.min(so + 0.08, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-l3', rgba(lr, lg, lb, Math.min(so + 0.06, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l1', rgba(dr, dg, db, Math.min(so + 0.04, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l2', rgba(dr, dg, db, Math.min(so + 0.08, 1)));
+  de.style.setProperty('--xiao-sidebar-ovl-dark-l3', rgba(dr, dg, db, Math.min(so + 0.06, 1)));
+  // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
+  const frame = findFrameElement();
+  if (frame) {
+    const isDark = document.body.hasAttribute('data-ds-dark-theme');
+    frame.style.backgroundColor = isDark ? rgba(dr, dg, db, ovl) : rgba(lr, lg, lb, ovl);
+    frame.style.backgroundImage = 'none';
+    frame.style.backdropFilter = 'blur(' + blur + 'px)';
+    (frame.style as StyleWithWebkit).webkitBackdropFilter = 'blur(' + blur + 'px)';
+  }
+}
+
+/**
+ * 单张背景：按配置应用 / 更新 / 移除整页磨砂背景。
  * 背景图铺在 body 上（一定可见），根框架强制半透明并加 backdrop-filter 模糊，
  * 让 body 背景图透出并产生磨砂效果——不依赖 z-index、不依赖主题服务。
+ * 这是**向后兼容快路径**：backgroundList 只有 ≤1 项时原样走这里，行为与旧版逐字一致。
  */
-function syncBackground(cfg: XiaoConfig): void {
+function syncBackgroundSingle(cfg: XiaoConfig): void {
   const de = document.documentElement;
   const on = cfg.enabled !== false && cfg.backgroundEnabled !== false;
   const isVideoBg = cfg.backgroundDynamic === true && isVideoPath(cfg.backgroundImagePath || '');
@@ -744,18 +869,7 @@ function syncBackground(cfg: XiaoConfig): void {
     }
     return;
   }
-  const blur = clampNum(typeof cfg.backgroundBlur === 'number' ? cfg.backgroundBlur : 22, 0, 60, 22);
-  // 统一的不透明度：浅色/深色共用同一 alpha（封顶 0.9 保证背景图恒可见），仅 RGB 底色随主题区分。
-  const p = clamp01(typeof cfg.panelOpacity === 'number' ? cfg.panelOpacity : 0.5);
-  const ovl = Math.min(p, PANEL_OPACITY_MAX);
-  // 侧栏独立不透明度：允许到 1.0（sidebar 可完全 100% 不透明），与主面板 0.9 封顶解耦。
-  const so = clamp01(typeof cfg.sidebarOpacity === 'number' ? cfg.sidebarOpacity : 0.85);
-  // 面板/侧栏底色的浅深 RGB 随主题主色派生。
-  const surf = deriveSurfaces(typeof cfg.themeColor === 'string' ? cfg.themeColor : DEFAULT_THEME_COLOR);
-  const [lr, lg, lb] = surf.light;
-  const [dr, dg, db] = surf.dark;
-  const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
-  de.classList.add('xiao-bg-on');
+  applyBackgroundChrome(cfg);
   // 动态背景：GIF 动图走 CSS background-image；视频走 <video> 元素（CSS 背景无法渲染视频）。
   de.classList.toggle('xiao-bg-dynamic', cfg.backgroundDynamic === true);
   de.classList.toggle('xiao-bg-video', isVideoBg);
@@ -766,33 +880,6 @@ function syncBackground(cfg: XiaoConfig): void {
   } else {
     de.style.setProperty('--xiao-bg-img', 'url("/xiao-bg?p=' + encodeURIComponent(cfg.backgroundImagePath || '') + '&v=' + bgVersion + '")');
   }
-  de.style.setProperty('--xiao-bg-blur', blur + 'px');
-  // 背景渐变随主色：中段 = 主色，两端为同色暗/亮。
-  de.style.setProperty('--xiao-theme-color', themeColor);
-  de.style.setProperty('--xiao-grad-a', shiftLight(themeColor, -44));
-  de.style.setProperty('--xiao-grad-b', shiftLight(themeColor, -30));
-  de.style.setProperty('--xiao-bg-ovl', rgba(lr, lg, lb, ovl));
-  de.style.setProperty('--xiao-bg-ovl-dark', rgba(dr, dg, db, ovl));
-  // 侧栏杆：浅色/深色各一个变量，由 CSS 属性选择器套到 sidebarCol/detailsCol 上。
-  de.style.setProperty('--xiao-sidebar-ovl', rgba(lr, lg, lb, so));
-  de.style.setProperty('--xiao-sidebar-ovl-dark', rgba(dr, dg, db, so));
-  // 右栏面板内部的语义 token 覆盖值（见 XIAO_CSS 的 [data-sidebar-right-panel] 规则）：面板内的
-  // tab 条/卡片走 --dsw-alias-bg-layer-1/2/3，比面板底色略实一点，既保住内容可读性，又让整体
-  // 仍随侧栏不透明度单调变化（so=0 近全透、so=1 完全不透明）。不设 0.25 之类下限，否则拖到 0 也不透。
-  de.style.setProperty('--xiao-sidebar-ovl-l1', rgba(lr, lg, lb, Math.min(so + 0.04, 1)));
-  de.style.setProperty('--xiao-sidebar-ovl-l2', rgba(lr, lg, lb, Math.min(so + 0.08, 1)));
-  de.style.setProperty('--xiao-sidebar-ovl-l3', rgba(lr, lg, lb, Math.min(so + 0.06, 1)));
-  de.style.setProperty('--xiao-sidebar-ovl-dark-l1', rgba(dr, dg, db, Math.min(so + 0.04, 1)));
-  de.style.setProperty('--xiao-sidebar-ovl-dark-l2', rgba(dr, dg, db, Math.min(so + 0.08, 1)));
-  de.style.setProperty('--xiao-sidebar-ovl-dark-l3', rgba(dr, dg, db, Math.min(so + 0.06, 1)));
-  // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
-  if (frame) {
-    const isDark = document.body.hasAttribute('data-ds-dark-theme');
-    frame.style.backgroundColor = isDark ? rgba(dr, dg, db, ovl) : rgba(lr, lg, lb, ovl);
-    frame.style.backgroundImage = 'none';
-    frame.style.backdropFilter = 'blur(' + blur + 'px)';
-    (frame.style as StyleWithWebkit).webkitBackdropFilter = 'blur(' + blur + 'px)';
-  }
   // 视频背景：创建/更新 <video> 元素（铺满 + 循环 + 声音开关）。
   syncBgVideo(cfg, isVideoBg);
   // 强制重绘：背景挂在 background-attachment:fixed 下时，仅改 CSS 变量在某些浏览器不会刷新背景图层
@@ -800,6 +887,359 @@ function syncBackground(cfg: XiaoConfig): void {
   de.classList.remove('xiao-bg-on');
   void de.offsetHeight;
   de.classList.add('xiao-bg-on');
+}
+// —— 多背景轮播（backgroundList 长度 ≥ 2 时启用）——
+// 设计要点：
+//   * 与「单张快路径」互斥：≤1 项时不创建图层、不挂定时器，完全走 syncBackgroundSingle。
+//   * 轮播状态放模块级，signature 只含「列表 + 间隔」；拖不透明度滑杆、切明暗主题都不会把轮播
+//     重置回第一张（原实现每次配置变更都会整体重跑背景）。
+//   * 视频切换时间 = max(间隔, 视频时长)：间隔 > 时长时循环播到点再切；间隔 ≤ 时长时播完即切。
+//     动画 GIF 与静态图一律按「间隔」调度（GIF 没有可靠的播放结束事件）。
+//   * 切换用固定时长交叉渐变：新旧两层 opacity 互换，渐变结束后释放旧层（含视频缓冲）。
+//     因此任意时刻最多只有 2 个背景（当前 + 即将上场），而非整列表。
+
+/** 交叉渐变固定时长（ms）：旧层淡出 / 新层淡入在此时长内完成。 */
+const BG_FADE_MS = 700;
+/** 背景图层类名（CSS 见 XIAO_CSS）。 */
+const BG_LAYER_CLASS = 'xiao-bg-layer';
+
+interface RotationState {
+  /** 轮播指纹（列表 + 间隔）：变化才重建，否则只做软更新。 */
+  signature: string;
+  /** 当前可见层下标（0 / 1）。 */
+  visible: number;
+  layers: [HTMLElement, HTMLElement] | null;
+  timer: number | null;
+  /** 世代号：异步回调（加载完成 / ended / 定时器）仅在世代未变时生效，避免竞态重复推进。 */
+  token: number;
+}
+
+const rotation: RotationState = { signature: '', visible: 0, layers: null, timer: null, token: 0 };
+
+/** 取「有效多背景列表」：配置里的合法项；为空时由旧字段合成单张，保证长度恒 ≥ 1。 */
+function effectiveBackgroundList(cfg: XiaoConfig): BackgroundEntry[] {
+  const raw = Array.isArray(cfg.backgroundList) ? cfg.backgroundList : [];
+  const list: BackgroundEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object') continue;
+    const path = typeof item.path === 'string' ? item.path.trim() : '';
+    if (path.length === 0 || seen.has(path)) continue;
+    seen.add(path);
+    list.push({ path, dynamic: item.dynamic === true });
+  }
+  if (list.length === 0) {
+    list.push({
+      path: cfg.backgroundImagePath || CLIENT_DEFAULT_CONFIG.backgroundImagePath,
+      dynamic: cfg.backgroundDynamic === true,
+    });
+  }
+  return list;
+}
+
+/** 清空一层：暂停并释放可能存在的 <video>，清掉背景图（不删元素本身）。 */
+function clearLayer(el: HTMLElement): void {
+  const video = el.querySelector('video');
+  if (video) {
+    try {
+      video.pause();
+    } catch {
+      /* 忽略：暂停失败不影响后续移除 */
+    }
+    video.removeAttribute('src');
+    try {
+      video.load();
+    } catch {
+      /* 忽略：释放缓冲失败不影响后续移除 */
+    }
+    video.remove();
+  }
+  el.style.backgroundImage = '';
+}
+
+/** 创建 / 复用两个固定定位的背景层（挂在 body 下、#root 之前方，故框架磨砂仍能采样到）。 */
+function ensureRotationLayers(): [HTMLElement, HTMLElement] {
+  const existing = rotation.layers;
+  if (existing !== null && existing[0].isConnected && existing[1].isConnected) return existing;
+  if (existing !== null) {
+    for (const el of existing) if (el.parentNode) el.parentNode.removeChild(el);
+  }
+  const make = (slot: number): HTMLElement => {
+    const el = document.createElement('div');
+    el.className = BG_LAYER_CLASS;
+    el.dataset.plugin = 'xiao-theme-ts';
+    el.dataset.slot = String(slot);
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    return el;
+  };
+  const layers: [HTMLElement, HTMLElement] = [make(0), make(1)];
+  rotation.layers = layers;
+  return layers;
+}
+
+/** 声音开关软更新：只改现有 <video> 的 muted，不重启轮播。 */
+function applyRotationAudio(cfg: XiaoConfig): void {
+  if (rotation.layers === null) return;
+  const muted = cfg.backgroundVideoAudio !== true;
+  for (const el of rotation.layers) {
+    const video = el.querySelector('video');
+    if (video instanceof HTMLVideoElement) video.muted = muted;
+  }
+}
+
+/** 停止轮播并移除全部图层（离开轮播模式 / 卸载 / 总开关关闭时调用）。 */
+function stopRotation(): void {
+  rotation.token += 1;
+  if (rotation.timer !== null) {
+    window.clearTimeout(rotation.timer);
+    rotation.timer = null;
+  }
+  if (rotation.layers !== null) {
+    for (const el of rotation.layers) {
+      clearLayer(el);
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+  }
+  rotation.layers = null;
+  rotation.signature = '';
+  rotation.visible = 0;
+  document.documentElement.classList.remove('xiao-bg-layers');
+}
+
+/**
+ * 视频项的切换策略（纯函数，供单测直接验证核心规则：切换时间 = max(间隔, 视频时长)）。
+ * - 间隔 ≤ 时长：必须播完才切 —— loop=false，等 `ended`；
+ * - 间隔 > 时长（或时长未知）：循环播到点再切 —— loop=true，定时器。
+ */
+function videoPlaythroughPlan(
+  intervalMs: number,
+  durationMs: number | null,
+): { loop: boolean; waitForEnded: boolean; switchAfterMs: number } {
+  if (durationMs !== null && Number.isFinite(durationMs) && intervalMs <= durationMs) {
+    return { loop: false, waitForEnded: true, switchAfterMs: durationMs };
+  }
+  return { loop: true, waitForEnded: false, switchAfterMs: intervalMs };
+}
+
+/**
+ * 把一项背景渲染进某一层；就绪后回调（携带视频时长 ms；静态图 / GIF 或读取失败为 null）。
+ * 静态图 / 动画 GIF 走 CSS background-image + Image 预加载；视频走 <video>。
+ */
+function prepareLayer(
+  cfg: XiaoConfig,
+  el: HTMLElement,
+  entry: BackgroundEntry,
+  entryIndex: number,
+  intervalMs: number,
+  onReady: (durationMs: number | null) => void,
+): void {
+  clearLayer(el);
+  // p= 是缓存指纹；i= 让 Host 在列表里取对应项。两者都带，Host 优先按 p 精确匹配（见 /xiao-bg 路由）。
+  const url = '/xiao-bg?i=' + entryIndex + '&p=' + encodeURIComponent(entry.path) + '&v=' + bgVersion;
+  if (entry.dynamic === true && isVideoPath(entry.path)) {
+    const video = document.createElement('video');
+    video.muted = cfg.backgroundVideoAudio !== true;
+    video.loop = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.src = url;
+    el.appendChild(video);
+    let settled = false;
+    const done = (durationMs: number | null): void => {
+      if (settled) return;
+      settled = true;
+      onReady(durationMs);
+    };
+    const readDuration = (): number | null =>
+      Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : null;
+    video.addEventListener('loadedmetadata', () => {
+      // 元数据阶段先按同一规则定好 loop，避免短片段在还没轮到切换时就自己循环。
+      video.loop = videoPlaythroughPlan(intervalMs, readDuration()).loop;
+    });
+    video.addEventListener('canplay', () => done(readDuration()));
+    video.addEventListener('error', () => done(null));
+    const played = video.play();
+    if (played && typeof played.catch === 'function') {
+      played.catch(() => {
+        // 带声音自动播放可能被浏览器拦截：先静音播起来（背景不放空），轮播照常推进。
+        if (video.muted) return;
+        video.muted = true;
+        void video.play().catch(() => {
+          /* 静音仍失败：保留首帧，等待下一次切换 */
+        });
+      });
+    }
+    return;
+  }
+  const probe = new Image();
+  probe.onload = () => onReady(null);
+  probe.onerror = () => onReady(null);
+  probe.src = url;
+  el.style.backgroundImage = 'url("' + url + '")';
+}
+
+/**
+ * 为「刚成为可见」的这一项安排下一次切换。
+ * 视频：间隔 ≤ 时长 → loop=false + ended（播完即切，另加安全网）；间隔 > 时长 → 循环播到点。
+ * 静态 / GIF / 时长未知：到点即切。
+ */
+function scheduleRotation(
+  cfg: XiaoConfig,
+  list: BackgroundEntry[],
+  index: number,
+  token: number,
+  intervalMs: number,
+  durationMs: number | null,
+): void {
+  if (token !== rotation.token) return;
+  if (rotation.timer !== null) {
+    window.clearTimeout(rotation.timer);
+    rotation.timer = null;
+  }
+  const entry = list[index]!;
+  const isVideo = entry.dynamic === true && isVideoPath(entry.path);
+  let fired = false;
+  const advance = (): void => {
+    if (fired || token !== rotation.token) return;
+    fired = true;
+    if (rotation.timer !== null) {
+      window.clearTimeout(rotation.timer);
+      rotation.timer = null;
+    }
+    showRotationEntry(cfg, list, (index + 1) % list.length, token, false);
+  };
+  if (isVideo) {
+    const plan = videoPlaythroughPlan(intervalMs, durationMs);
+    if (plan.waitForEnded && durationMs !== null) {
+      const current = rotation.layers === null ? null : (rotation.layers[rotation.visible] ?? null);
+      const video = current === null ? null : current.querySelector('video');
+      if (video instanceof HTMLVideoElement) {
+        video.addEventListener('ended', advance, { once: true });
+        // 安全网：个别容器 / 解码异常下 ended 可能不触发，按「时长 + 渐变 + 余量」兜底。
+        rotation.timer = window.setTimeout(advance, plan.switchAfterMs + BG_FADE_MS + 1500);
+        return;
+      }
+    }
+    rotation.timer = window.setTimeout(advance, plan.switchAfterMs);
+    return;
+  }
+  rotation.timer = window.setTimeout(advance, intervalMs);
+}
+
+/** 切换 / 首显某一项：先把新项渲染进「不可见层」，就绪后再交叉渐变并安排下一次。 */
+function showRotationEntry(
+  cfg: XiaoConfig,
+  list: BackgroundEntry[],
+  index: number,
+  token: number,
+  immediate: boolean,
+): void {
+  if (token !== rotation.token || rotation.layers === null) return;
+  const layers = rotation.layers;
+  const entry = list[index]!;
+  const incoming = layers[rotation.visible ^ 1]!;
+  const outgoing = layers[rotation.visible]!;
+  const intervalSec = clampNum(
+    typeof cfg.backgroundInterval === 'number' ? cfg.backgroundInterval : 30,
+    CLIENT_RANGES.backgroundInterval.min,
+    CLIENT_RANGES.backgroundInterval.max,
+    30,
+  );
+  const intervalMs = intervalSec * 1000;
+  let handedOver = false;
+  const handOver = (durationMs: number | null): void => {
+    if (token !== rotation.token || handedOver) return;
+    handedOver = true;
+    incoming.style.transition = immediate ? 'none' : '';
+    incoming.style.opacity = '1';
+    outgoing.style.opacity = '0';
+    if (immediate) {
+      void incoming.offsetHeight; // 强制重排：让「无过渡」的这一帧立即生效，避免闪白
+      incoming.style.transition = '';
+    }
+    rotation.visible = rotation.visible ^ 1;
+    // 渐变结束后释放旧层（含其视频缓冲），保证任意时刻最多 2 个背景资源。
+    const oldLayer = outgoing;
+    window.setTimeout(
+      () => {
+        if (token !== rotation.token) return;
+        clearLayer(oldLayer);
+      },
+      immediate ? 0 : BG_FADE_MS + 80,
+    );
+    scheduleRotation(cfg, list, index, token, intervalMs, durationMs);
+  };
+  prepareLayer(cfg, incoming, entry, index, intervalMs, handOver);
+}
+
+/** 该层当前是否已有内容（有背景图或 <video>）。用于区分「首次铺层」与「已在轮播中」。 */
+function layerHasContent(el: HTMLElement): boolean {
+  return el.style.backgroundImage !== '' || el.querySelector('video') !== null;
+}
+
+/**
+ * 启动 / 重启一轮轮播。
+ * - 首次铺层（两层皆空）：第 0 项「无渐变」直接上屏，避免闪白；
+ * - 已在进行中（列表 / 间隔变更导致重启）：保留当前可见层，把新的第 0 项淡入 —— 不闪、不空窗。
+ */
+function startRotation(cfg: XiaoConfig, list: BackgroundEntry[]): void {
+  rotation.token += 1;
+  const token = rotation.token;
+  if (rotation.timer !== null) {
+    window.clearTimeout(rotation.timer);
+    rotation.timer = null;
+  }
+  const layers = ensureRotationLayers();
+  const fresh = !layerHasContent(layers[0]) && !layerHasContent(layers[1]);
+  if (!fresh) {
+    // 已有可见背景：直接淡入新的第 0 项（showRotationEntry 会翻转到另一层）。
+    showRotationEntry(cfg, list, 0, token, false);
+    return;
+  }
+  layers[0].style.transition = 'none';
+  layers[1].style.transition = 'none';
+  layers[0].style.opacity = '0';
+  layers[1].style.opacity = '0';
+  rotation.visible = 0;
+  showRotationEntry(cfg, list, 0, token, true);
+}
+
+/** 轮播模式：应用公共视觉层 + 图层渲染；配置只软变化（非列表/间隔）时不重启。 */
+function syncBackgroundRotation(cfg: XiaoConfig, list: BackgroundEntry[]): void {
+  const de = document.documentElement;
+  applyBackgroundChrome(cfg);
+  de.classList.add('xiao-bg-layers');
+  de.classList.remove('xiao-bg-dynamic');
+  de.classList.remove('xiao-bg-video');
+  // 关掉 body 背景图（视觉交给图层）；`none` 与身后的渐变组合仍合法，只是被不透明图层盖住。
+  de.style.setProperty('--xiao-bg-img', 'none');
+  removeBgVideo();
+  const signature = JSON.stringify({ list, interval: cfg.backgroundInterval });
+  if (rotation.layers !== null && signature === rotation.signature) {
+    applyRotationAudio(cfg);
+    return;
+  }
+  rotation.signature = signature;
+  startRotation(cfg, list);
+}
+
+/**
+ * 磨砂背景总入口：≥2 项走轮播，否则走单张快路径。
+ * 两者互斥；从轮播切回单张时先彻底移除图层，避免残留。
+ */
+function syncBackground(cfg: XiaoConfig): void {
+  const de = document.documentElement;
+  const on = cfg.enabled !== false && cfg.backgroundEnabled !== false;
+  const list = effectiveBackgroundList(cfg);
+  if (on && list.length >= 2) {
+    syncBackgroundRotation(cfg, list);
+    return;
+  }
+  if (rotation.layers !== null) stopRotation();
+  de.classList.remove('xiao-bg-layers');
+  syncBackgroundSingle(cfg);
 }
 
 function clamp01(value: number): number {
@@ -1330,9 +1770,10 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
   );
   const themeRows = themeList.map((t2) => {
     const editing = editingId === t2.id;
+    // 紧凑行：名称占满剩余宽度并省略号，右侧只放「当前 / 内置」小胶囊 + 小号操作按钮。
     const nameContent = editing
       ? React.createElement('input', {
-          className: 'xiao-settings-input',
+          className: 'xiao-settings-input xiao-theme-rename',
           value: editingName,
           autoFocus: true,
           onChange: (e: React.ChangeEvent<HTMLInputElement>) => setEditingName(e.target.value),
@@ -1345,17 +1786,41 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
             }
           },
         })
-      : React.createElement('span', { className: 'xiao-settings-name' }, t2.name + (t2.active ? t('activeSuffix') : ''));
+      : React.createElement(
+          'span',
+          { className: 'xiao-theme-namewrap' },
+          React.createElement('span', { className: 'xiao-theme-name', title: t2.name }, t2.name),
+          t2.active
+            ? React.createElement('span', { className: 'xiao-theme-tag xiao-theme-tag-active' }, t('activeTag'))
+            : null,
+          t2.builtin
+            ? React.createElement('span', { className: 'xiao-theme-tag', title: t('builtinNotDelete') }, t('builtinTag'))
+            : null,
+        );
     return React.createElement(
       'div',
-      { className: 'xiao-settings-row', key: t2.id },
+      { className: 'xiao-theme-row' + (t2.active ? ' xiao-theme-row-active' : ''), key: t2.id },
       nameContent,
+      // 行内切换：非当前主题才显示，且编辑名称时不渲染（避免 blur-rename 与 activate 并发）。
+      editing || t2.active
+        ? null
+        : React.createElement(
+            'button',
+            {
+              className: 'xiao-settings-btn xiao-theme-act xiao-theme-act-primary',
+              type: 'button',
+              disabled: busy,
+              title: t('useThemeHint'),
+              onClick: () => void onActivate(t2.id),
+            },
+            t('useTheme'),
+          ),
       editing
         ? null
         : React.createElement(
             'button',
             {
-              className: 'xiao-settings-btn',
+              className: 'xiao-settings-btn xiao-theme-act',
               type: 'button',
               disabled: busy,
               onClick: () => {
@@ -1365,13 +1830,17 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
             },
             t('rename'),
           ),
-      React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => void onExport(t2.id) }, t('exportTheme')),
+      React.createElement(
+        'button',
+        { className: 'xiao-settings-btn xiao-theme-act', type: 'button', onClick: () => void onExport(t2.id) },
+        t('exportTheme'),
+      ),
       t2.builtin
-        ? React.createElement('button', { className: 'xiao-settings-btn', type: 'button', disabled: true, title: t('builtinNotDelete') }, t('deleteTheme'))
+        ? null
         : React.createElement(
             'button',
             {
-              className: 'xiao-settings-btn' + (pendingDeleteId === t2.id ? ' xiao-settings-danger' : ''),
+              className: 'xiao-settings-btn xiao-theme-act' + (pendingDeleteId === t2.id ? ' xiao-settings-danger' : ''),
               type: 'button',
               disabled: busy,
               onClick: () => void onDelete(t2.id),
@@ -1441,7 +1910,18 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
           ),
         ]
       : []),
-    ...themeRows,
+    ...(themeList.length > 0
+      ? [
+          React.createElement(
+            'div',
+            { className: 'xiao-theme-list-head' },
+            React.createElement('span', { className: 'xiao-theme-list-title' }, t('themeListTitle')),
+            React.createElement('span', { className: 'xiao-theme-list-title' }, String(themeList.length)),
+          ),
+          // 自带滚动容器：块高与主题数量解耦（max-height 固定上限），主题多时在框内滚动，不顶长设置页。
+          React.createElement('div', { className: 'xiao-theme-list' }, ...themeRows),
+        ]
+      : []),
     React.createElement(
       'div',
       { className: 'xiao-settings-row' },
@@ -1502,11 +1982,21 @@ function UploadPicker({
   kind,
   store,
   onClose,
+  mode = 'replace',
+  existingPaths,
+  onAdd,
 }: {
   kind: 'bg' | 'avatar';
   store: ConfigStore;
   onClose: () => void;
+  /** replace：点选后写回「第 1 张」；add：点选即加入轮播列表（不写配置，走 onAdd）。 */
+  mode?: 'replace' | 'add';
+  /** add 模式：已在轮播列表里的路径，标记为「已添加」且不可重复点选。 */
+  existingPaths?: string[];
+  /** add 模式：点选（或上传）一项后的回调。 */
+  onAdd?: (entry: { path: string; dynamic: boolean }) => void;
 }): React.ReactElement {
+  const addMode = mode === 'add';
   const [items, setItems] = React.useState<UploadEntry[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<string | null>(null);
@@ -1557,6 +2047,10 @@ function UploadPicker({
   const thumbUrl = (item: UploadEntry): string =>
     '/xiao-theme/uploads-file?name=' + encodeURIComponent(item.name) + '&v=' + item.mtime;
 
+  /** add 模式：该项是否已在轮播列表里（已添加的不可重复点）。 */
+  const alreadyAdded = (item: UploadEntry): boolean =>
+    existingPaths !== undefined && existingPaths.indexOf(item.path) >= 0;
+
   /** 选中并写回当前主题背景/头像配置。 */
   const useSelected = async (): Promise<void> => {
     const item = items && items.find((u) => u.name === selected);
@@ -1580,6 +2074,17 @@ function UploadPicker({
     setUploading(true);
     setError(null);
     try {
+      if (addMode) {
+        // add 模式：上传后直接把文件加入轮播列表（不覆盖「第 1 张」背景）。
+        const result = await uploadBackgroundFile(file);
+        if ('error' in result) {
+          setError(t('uploadsUploadFailed') + ': ' + result.error);
+        } else {
+          await refresh();
+          if (onAdd) onAdd({ path: result.path, dynamic: result.dynamic });
+        }
+        return;
+      }
       const err = kind === 'avatar' ? await uploadAvatar(store, file) : await uploadBackground(store, file);
       if (err !== null) {
         setError(t('uploadsUploadFailed') + ': ' + err);
@@ -1624,9 +2129,25 @@ function UploadPicker({
               React.createElement(
                 'div',
                 {
-                  className: 'xiao-upload-item' + (selected === item.name ? ' xiao-upload-item-sel' : ''),
+                  className:
+                    'xiao-upload-item' +
+                    (addMode
+                      ? alreadyAdded(item)
+                        ? ' xiao-upload-item-sel'
+                        : ''
+                      : selected === item.name
+                        ? ' xiao-upload-item-sel'
+                        : ''),
                   key: item.name,
-                  onClick: () => setSelected(item.name),
+                  onClick: () => {
+                    if (!addMode) {
+                      setSelected(item.name);
+                      return;
+                    }
+                    // add 模式：点缩略图即加入轮播（已添加的忽略）。
+                    if (alreadyAdded(item) || !onAdd) return;
+                    onAdd({ path: item.path, dynamic: item.isDynamic });
+                  },
                 },
                 isUploadVideo(item)
                   ? React.createElement('video', {
@@ -1645,8 +2166,15 @@ function UploadPicker({
                   React.createElement(
                     'div',
                     { className: 'xiao-upload-ref' },
-                    item.active ? React.createElement('span', { className: 'xiao-upload-cur' }, t('uploadsCurrent')) : null,
-                    item.usedBy.length > 0 ? t('uploadsUsedBy') + ': ' + item.usedBy.join(', ') : null,
+                    addMode && alreadyAdded(item)
+                      ? React.createElement('span', { className: 'xiao-upload-cur' }, t('bgAlreadyAdded'))
+                      : null,
+                    !addMode && item.active
+                      ? React.createElement('span', { className: 'xiao-upload-cur' }, t('uploadsCurrent'))
+                      : null,
+                    !addMode && item.usedBy.length > 0
+                      ? t('uploadsUsedBy') + ': ' + item.usedBy.join(', ')
+                      : null,
                   ),
                 ),
               ),
@@ -1659,7 +2187,7 @@ function UploadPicker({
     React.createElement(
       'div',
       { className: 'xiao-upload-panel' },
-      React.createElement('div', { className: 'xiao-upload-head' }, t('uploadsTitle')),
+      React.createElement('div', { className: 'xiao-upload-head' }, addMode ? t('bgPickerAddTitle') : t('uploadsTitle')),
       error ? React.createElement('div', { className: 'xiao-settings-warn' }, error) : null,
       listBody,
       folderHint ? React.createElement('div', { className: 'xiao-settings-hint' }, folderHint) : null,
@@ -1695,20 +2223,22 @@ function UploadPicker({
           },
           t('uploadsOpenFolder'),
         ),
-        React.createElement(
-          'button',
-          {
-            className: 'xiao-settings-btn',
-            type: 'button',
-            disabled: using || selected === null,
-            onClick: () => void useSelected(),
-          },
-          t('uploadsUse'),
-        ),
+        addMode
+          ? null
+          : React.createElement(
+              'button',
+              {
+                className: 'xiao-settings-btn',
+                type: 'button',
+                disabled: using || selected === null,
+                onClick: () => void useSelected(),
+              },
+              t('uploadsUse'),
+            ),
         React.createElement(
           'button',
           { className: 'xiao-settings-btn', type: 'button', onClick: onClose },
-          t('uploadsClose'),
+          addMode ? t('uploadsDone') : t('uploadsClose'),
         ),
       ),
     ),
@@ -1862,6 +2392,129 @@ function RoleplayGroup({ cfg, store }: { cfg: XiaoConfig; store: ConfigStore }):
   );
 }
 
+/**
+ * 多背景列表编辑器：列出全部背景（路径 / 动态标记），支持上移 / 下移 / 移除，
+ * 并从「已上传文件」下拉添加，或直接上传新文件后追加。
+ * 列表只有 1 项时不渲染列表行（保持单背景界面简洁），只保留添加入口；
+ * 一旦 ≥ 2 项即出现列表与上移/下移/移除控件，Host 端随即进入轮播。
+ */
+/**
+ * 多背景列表编辑器：每条背景带缩略图，可上移 / 下移 / 移除；「从已上传文件添加」打开带缩略图的
+ * 上传选择器（复用 UploadPicker 的 add 模式），按图挑选，不再靠文件名下拉。
+ * 列表只有 1 项时不渲染列表行（保持单背景界面简洁），只保留添加入口；
+ * 一旦 ≥ 2 项即出现列表与控件，Host 端随即进入轮播。
+ */
+function BackgroundListEditor({ list, store }: { list: BackgroundEntry[]; store: ConfigStore }): React.ReactElement {
+  const [pickerOpen, setPickerOpen] = React.useState<boolean>(false);
+  const [note, setNote] = React.useState<string | null>(null);
+
+  // 写回列表：withBackgroundMirror 会把首项自动同步到单张旧字段，因此无需在这里手工镜像。
+  const apply = (next: BackgroundEntry[]): void => {
+    if (next.length === 0) return; // 至少保留 1 项，避免把背景清空
+    void saveConfig(store, { backgroundList: next });
+  };
+  const move = (index: number, delta: number): void => {
+    const target = index + delta;
+    if (target < 0 || target >= list.length) return;
+    const next = list.map((entry) => ({ ...entry }));
+    const swap = next[index]!;
+    next[index] = next[target]!;
+    next[target] = swap;
+    apply(next);
+  };
+  const removeAt = (index: number): void => {
+    if (list.length <= 1) return;
+    apply(list.filter((_entry, i) => i !== index));
+  };
+  const addPath = (path: string, dynamic: boolean): void => {
+    if (list.some((entry) => entry.path === path)) {
+      setNote(t('bgAddDuplicate'));
+      return;
+    }
+    setNote(null);
+    apply([...list, { path, dynamic }]);
+  };
+
+  /** 行缩略图：视频用 <video>（preload metadata 取首帧），静态图 / GIF 用 <img>。 */
+  const thumbFor = (entry: BackgroundEntry, index: number): React.ReactElement => {
+    const url = bgThumbUrl(entry, index);
+    return entry.dynamic === true && isVideoPath(entry.path)
+      ? React.createElement('video', {
+          className: 'xiao-bg-thumb',
+          src: url,
+          muted: true,
+          playsInline: true,
+          preload: 'metadata',
+        })
+      : React.createElement('img', { className: 'xiao-bg-thumb', src: url, alt: '', loading: 'lazy' });
+  };
+
+  const rows =
+    list.length < 2
+      ? null
+      : React.createElement(
+          'div',
+          { className: 'xiao-bg-rows' },
+          list.map((entry, index) =>
+            React.createElement(
+              'div',
+              { className: 'xiao-bg-row', key: entry.path },
+              React.createElement('span', { className: 'xiao-bg-index' }, String(index + 1)),
+              thumbFor(entry, index),
+              React.createElement('span', { className: 'xiao-bg-name', title: entry.path }, shortBgName(entry.path)),
+              React.createElement(
+                'span',
+                { className: 'xiao-bg-tag' },
+                entry.dynamic ? t('bgDynamicTag') : t('bgStaticTag'),
+              ),
+              React.createElement(
+                'button',
+                { className: 'xiao-settings-btn xiao-bg-mini', type: 'button', disabled: index === 0, title: t('bgMoveUp'), onClick: () => move(index, -1) },
+                '\u2191',
+              ),
+              React.createElement(
+                'button',
+                { className: 'xiao-settings-btn xiao-bg-mini', type: 'button', disabled: index === list.length - 1, title: t('bgMoveDown'), onClick: () => move(index, 1) },
+                '\u2193',
+              ),
+              React.createElement(
+                'button',
+                { className: 'xiao-settings-btn xiao-bg-mini xiao-settings-danger', type: 'button', disabled: list.length <= 1, title: t('bgRemove'), onClick: () => removeAt(index) },
+                '\u00d7',
+              ),
+            ),
+          ),
+        );
+
+  return React.createElement(
+    'div',
+    { className: 'xiao-bg-editor' },
+    React.createElement('div', { className: 'xiao-settings-label' }, t('bgListTitle')),
+    rows,
+    React.createElement(
+      'div',
+      { className: 'xiao-settings-row' },
+      React.createElement(
+        'button',
+        { className: 'xiao-settings-btn', type: 'button', onClick: () => setPickerOpen(true) },
+        t('bgAddFromUploads'),
+      ),
+    ),
+    note !== null ? React.createElement('div', { className: 'xiao-settings-hint' }, note) : null,
+    React.createElement('div', { className: 'xiao-settings-hint' }, t('bgListHint')),
+    pickerOpen
+      ? React.createElement(UploadPicker, {
+          kind: 'bg',
+          store,
+          mode: 'add',
+          existingPaths: list.map((entry) => entry.path),
+          onAdd: (entry: { path: string; dynamic: boolean }) => addPath(entry.path, entry.dynamic),
+          onClose: () => setPickerOpen(false),
+        })
+      : null,
+  );
+}
+
 function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
@@ -1875,9 +2528,12 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
   const voiceLanguage = cfg.voiceLanguage === 'zh' ? 'zh' : 'en';
   const voicePrompt = cfg.voicePrompt || '';
   const bgEnabled = cfg.backgroundEnabled !== false;
-  const bgPath = cfg.backgroundImagePath || CLIENT_DEFAULT_CONFIG.backgroundImagePath;
-  // 当前背景是否为视频（在下方显示「视频背景声音」开关；仅视频背景可播声音）。
-  const isVideoBg = cfg.backgroundDynamic === true && isVideoPath(bgPath);
+  // 多背景列表（长度恒 ≥ 1；≤1 时走单张快路径，界面与旧版一致）。
+  const bgList = effectiveBackgroundList(cfg);
+  const isMultiList = bgList.length >= 2;
+  const bgPath = bgList[0]!.path;
+  // 是否含视频（在下方显示「视频背景声音」开关；仅视频背景可播声音）。
+  const isVideoBg = bgList.some((entry) => entry.dynamic === true && isVideoPath(entry.path));
   const themeColor =
     typeof cfg.themeColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(cfg.themeColor)
       ? cfg.themeColor
@@ -2098,7 +2754,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, t('bgPath')),
+        React.createElement('label', { className: 'xiao-settings-label' }, isMultiList ? t('bgPathFirstMulti') : t('bgPath')),
         React.createElement('input', {
           className: 'xiao-settings-input',
           type: 'text',
@@ -2119,6 +2775,21 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
         { className: 'xiao-settings-row' },
         React.createElement('button', { className: 'xiao-settings-btn', type: 'button', onClick: () => setPickerKind('bg') }, t('uploadBg')),
       ),
+      // 多背景：始终提供「添加第 2 张」入口；≥2 项时展开列表与排序 / 删除，并显示切换间隔。
+      React.createElement(BackgroundListEditor, { list: bgList, store }),
+      isMultiList
+        ? React.createElement(RangeRow, {
+            label: t('bgInterval'),
+            value: clampNum(cfg.backgroundInterval, CLIENT_RANGES.backgroundInterval.min, CLIENT_RANGES.backgroundInterval.max, 30),
+            min: CLIENT_RANGES.backgroundInterval.min,
+            max: CLIENT_RANGES.backgroundInterval.max,
+            step: 1,
+            format: (v) => v + 's',
+            onCommit: (v) => {
+              if (v !== cfg.backgroundInterval) void saveConfig(store, { backgroundInterval: v });
+            },
+          })
+        : null,
       isVideoBg &&
         React.createElement(
           'div',
@@ -2176,6 +2847,8 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             onClick: () =>
               void saveConfig(store, {
                 backgroundEnabled: true,
+                // 显式重置为「单张」：只改单张字段会保留列表其余项，轮播仍会继续。
+                backgroundList: [{ path: 'resource/avatar.png', dynamic: false }],
                 backgroundImagePath: 'resource/avatar.png',
                 backgroundDynamic: false,
                 backgroundBlur: 22,
@@ -2193,6 +2866,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             onClick: () =>
               void saveConfig(store, {
                 backgroundEnabled: true,
+                backgroundList: [{ path: 'resource/xiao_dynamic.gif', dynamic: true }],
                 backgroundImagePath: 'resource/xiao_dynamic.gif',
                 backgroundDynamic: true,
               }),
@@ -2221,6 +2895,10 @@ const XIAO_CSS: string[] = [
   'html.xiao-bg-on.xiao-bg-dynamic body{background-image:var(--xiao-bg-img)!important;}',
   // 视频背景：body 背景图置空，仅留 <video> 元素（fixed 垫底）作为视觉层；磨砂层仍由 #root>div 透出并模糊。
   'html.xiao-bg-on.xiao-bg-video body{background-image:none!important;}',
+  // —— 多背景轮播：两个固定垫底层做交叉渐变（旧层淡出 / 新层淡入），时长由 BG_FADE_MS 决定。 ——
+  // 图层是 body 的子元素、位于 #root 之前方，因此根框架的 backdrop-filter 磨砂同样会采样到它们。
+  'html.xiao-bg-layers .xiao-bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;background-color:transparent;background-size:cover;background-position:center;background-repeat:no-repeat;opacity:0;transition:opacity ' + BG_FADE_MS + 'ms ease;}',
+  'html.xiao-bg-layers .xiao-bg-layer>video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}',
   'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
   'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
   // 左侧：DSH 自带侧栏，用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
@@ -2273,10 +2951,33 @@ const XIAO_CSS: string[] = [
   '.xiao-settings-color::-webkit-color-swatch{border:none;border-radius:50%;}',
   '.xiao-settings-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;}',
   '.xiao-settings-btn:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}',
-  '.xiao-settings-name{font-size:14px;color:var(--dsw-alias-label-primary);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+  // —— 主题管理列表：自带滚动容器，块高与主题数量解耦 ——
+  '.xiao-theme-list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}',
+  '.xiao-theme-list-title{font-size:12px;color:var(--dsw-alias-label-secondary);}',
+  // 固定上限 min(40vh,280px)：宿主设置面板本身是 min(800px,100vh-48px)，用 px 上限 + vh 兜底，跨 DSH 版本都稳。
+  '.xiao-theme-list{display:flex;flex-direction:column;gap:4px;max-height:min(40vh,280px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:6px;background:var(--dsw-alias-bg-layer-1);}',
+  '.xiao-theme-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;}',
+  '.xiao-theme-row:hover{background:var(--dsw-alias-bg-layer-2);}',
+  '.xiao-theme-row-active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary);}',
+  '.xiao-theme-namewrap{display:flex;align-items:center;gap:6px;flex:1;min-width:0;}',
+  '.xiao-theme-name{min-width:0;font-size:13px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+  '.xiao-theme-tag{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:1px 8px;}',
+  '.xiao-theme-tag-active{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);}',
+  '.xiao-theme-act{padding:3px 10px;font-size:12px;line-height:1.3;flex:none;}',
+  '.xiao-theme-act-primary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);}',
+  '.xiao-theme-rename{flex:1;min-width:0;}',
   '.xiao-settings-danger{border-color:var(--dsw-alias-state-error-primary)!important;color:var(--dsw-alias-state-error-primary)!important;}',
   '.xiao-settings-warn{font-size:12px;color:var(--dsw-alias-state-warn-primary);line-height:1.6;padding:2px 0;}',
   '.xiao-settings-hint{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.6;}',
+  // —— 多背景列表编辑器 ——
+  '.xiao-bg-editor{display:flex;flex-direction:column;gap:8px;}',
+  '.xiao-bg-rows{display:flex;flex-direction:column;gap:6px;}',
+  '.xiao-bg-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;}',
+  '.xiao-bg-thumb{width:40px;height:40px;object-fit:cover;border-radius:6px;flex:none;background:var(--dsw-alias-bg-overlay);}',
+  '.xiao-bg-index{font-size:12px;color:var(--dsw-alias-label-secondary);min-width:16px;text-align:right;flex:none;}',
+  '.xiao-bg-name{flex:1;min-width:0;font-size:13px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+  '.xiao-bg-tag{font-size:11px;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:1px 8px;flex:none;}',
+  '.xiao-bg-mini{padding:4px 10px;font-size:12px;line-height:1.2;}',
   '.xiao-upload-modal{position:fixed;inset:0;z-index:2147483600;background:rgba(10,24,20,0.55);display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,-apple-system,sans-serif;}',
   '.xiao-upload-panel{width:min(560px,92vw);max-height:78vh;display:flex;flex-direction:column;gap:12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;box-shadow:0 16px 50px rgba(0,0,0,0.4);overflow:hidden;}',
   '.xiao-upload-head{font-size:15px;font-weight:700;color:var(--dsw-alias-brand-primary);letter-spacing:1px;}',
@@ -2350,6 +3051,9 @@ function apply(ctx: ClientCtx): void {
       de.classList.remove('xiao-bg-dynamic');
       de.classList.remove('xiao-bg-video');
       removeBgVideo();
+      // 多背景轮播：卸载时同样要停定时器、移除图层，避免残留与后台空转。
+      stopRotation();
+      de.classList.remove('xiao-bg-layers');
       de.style.removeProperty('--xiao-bg-img');
       de.style.removeProperty('--xiao-bg-blur');
       de.style.removeProperty('--xiao-bg-ovl');
@@ -2442,6 +3146,7 @@ function apply(ctx: ClientCtx): void {
 export {
   inject,
   apply,
+  videoPlaythroughPlan,
   parseHex,
   rgbToHsl,
   hslToRgb,

@@ -7,6 +7,21 @@
 
 export type VoiceLanguage = 'en' | 'zh';
 
+/**
+ * 多背景轮播列表中的一项。
+ * - 列表长度 ≤ 1 时与旧版单背景行为**完全一致**（无轮播、无渐变）；
+ * - 长度 ≥ 2 时按 backgroundInterval 轮播，视频项的实际切换时间 = max(间隔, 视频时长)。
+ */
+export interface BackgroundEntry {
+  /** 背景资源路径：相对插件根（如 resource/avatar.png）或本地绝对路径。 */
+  path: string;
+  /**
+   * 是否为动态背景（视频 / 动画 GIF）：决定渲染方式。
+   * 轮播计时上动画 GIF 与静态图一样按「间隔」切换，只有视频按自身时长调度。
+   */
+  dynamic: boolean;
+}
+
 /** 魈主题的持久化配置。 */
 export interface XiaoConfig {
   /** 总开关：关掉后不注入提示词、头像与背景全部失效。 */
@@ -27,6 +42,20 @@ export interface XiaoConfig {
   backgroundDynamic: boolean;
   /** 视频背景是否播放声音（仅当背景为视频时生效；默认静音，因浏览器要求自动播放需 muted）。 */
   backgroundVideoAudio: boolean;
+  /**
+   * 多背景轮播列表（按顺序循环播放）。
+   * **向后兼容**：缺省 / 为空 / 非法时，由 backgroundImagePath + backgroundDynamic 合成一个只有
+   * 一项的列表；此时渲染与旧版单背景完全一致（无定时器、无渐变）。仅当长度 ≥ 2 时才进入轮播。
+   * 持久化时第 0 项会回写到 backgroundImagePath / backgroundDynamic，使旧版本与 /xiao-bg 的既有
+   * 读法继续有效（老配置 / 老导出因此无需迁移即可照常工作）。
+   */
+  backgroundList: BackgroundEntry[];
+  /**
+   * 多背景轮播间隔（秒）。仅 backgroundList 长度 ≥ 2 时生效。
+   * 静态图 / 动画 GIF：到点即切；视频：间隔 ≤ 视频时长时「播完即切」，间隔 > 视频时长时循环播到点
+   * 再切（即切换时间 = max(间隔, 视频时长)）。
+   */
+  backgroundInterval: number;
   /** 磨砂背景模糊强度（px）。 */
   backgroundBlur: number;
   /**

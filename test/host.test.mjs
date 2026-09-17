@@ -4,7 +4,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRange, isAnimatedGif, videoFormatMatches, yamlLiteralBlock, normalizeConfig } from '../lib/index.js';
+import {
+  parseRange,
+  isAnimatedGif,
+  videoFormatMatches,
+  yamlLiteralBlock,
+  normalizeConfig,
+  normalizeBackgroundList,
+} from '../lib/index.js';
 
 test('parseRange: \u5408\u6cd5\u533a\u95f4', () => {
   assert.deepEqual(parseRange('bytes=0-99', 1000), { start: 0, end: 99 });
@@ -101,4 +108,54 @@ test('normalizeConfig: \u5409\u7965\u7269\u6587\u6848\u515c\u5e95', () => {
   assert.equal(normalizeConfig({ mascotTitle: '   ' }).mascotTitle, '\u9756\u5996\u50a9\u821e');
   assert.equal(normalizeConfig({ mascotTitle: 'X' }).mascotTitle, 'X');
   assert.equal(normalizeConfig({ mascotSubtitle: '' }).mascotSubtitle, '');
+});
+
+test('normalizeBackgroundList: filter invalid, dedupe by path', () => {
+  assert.deepEqual(normalizeBackgroundList(undefined), []);
+  assert.deepEqual(normalizeBackgroundList('nope'), []);
+  assert.deepEqual(normalizeBackgroundList([null, 1, {}, { path: '' }, { path: '   ' }]), []);
+  assert.deepEqual(
+    normalizeBackgroundList([
+      { path: 'a.png', dynamic: true },
+      { path: 'a.png', dynamic: false },
+      { path: ' b.gif ' },
+      { path: 'c.mp4', dynamic: 1 },
+    ]),
+    [
+      { path: 'a.png', dynamic: true },
+      { path: 'b.gif', dynamic: false },
+      { path: 'c.mp4', dynamic: false },
+    ],
+  );
+});
+
+test('normalizeConfig: multi-background synthesis and mirroring (backward compatible)', () => {
+  // Legacy single-background config (no list): synthesized to exactly one entry; old fields untouched.
+  const legacy = normalizeConfig({ backgroundImagePath: 'x.png', backgroundDynamic: true });
+  assert.deepEqual(legacy.backgroundList, [{ path: 'x.png', dynamic: true }]);
+  assert.equal(legacy.backgroundImagePath, 'x.png');
+  assert.equal(legacy.backgroundDynamic, true);
+  // Defaults: list length is always >= 1; interval default 30.
+  const def = normalizeConfig({});
+  assert.equal(def.backgroundList.length, 1);
+  assert.equal(def.backgroundList[0].path, 'resource/avatar.png');
+  assert.equal(def.backgroundList[0].dynamic, false);
+  assert.equal(def.backgroundInterval, 30);
+  // Explicit list: first entry is mirrored back onto the legacy single fields.
+  const multi = normalizeConfig({
+    backgroundImagePath: 'ignored.png',
+    backgroundList: [{ path: 'a.png' }, { path: 'b.gif', dynamic: true }],
+    backgroundInterval: 5,
+  });
+  assert.deepEqual(multi.backgroundList, [
+    { path: 'a.png', dynamic: false },
+    { path: 'b.gif', dynamic: true },
+  ]);
+  assert.equal(multi.backgroundImagePath, 'a.png');
+  assert.equal(multi.backgroundDynamic, false);
+  assert.equal(multi.backgroundInterval, 5);
+  // Interval clamping and fallback.
+  assert.equal(normalizeConfig({ backgroundInterval: 9999 }).backgroundInterval, 600);
+  assert.equal(normalizeConfig({ backgroundInterval: 0 }).backgroundInterval, 2);
+  assert.equal(normalizeConfig({ backgroundInterval: 'x' }).backgroundInterval, 30);
 });
