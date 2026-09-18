@@ -707,19 +707,118 @@ function isVideoPath(pathValue: string): boolean {
   return /\.(mp4|webm|mov|m4v)$/i.test(pathValue || '');
 }
 
-/** 视频背景的首个用户交互时恢复声音的清理句柄（避免重复挂监听/泄漏）。 */
-let bgVideoGestureCleanup: (() => void) | null = null;
+/**
+ * 每个背景 <video> 各自的「等首次用户交互」监听清理句柄。
+ * 用 WeakMap 而不是单个全局变量：轮播里两层各有自己的 <video>，单一全局句柄会被后者覆盖，
+ * 导致前一个元素的监听泄漏、声音恢复失效。
+ */
+const bgVideoGestureCleanup = new WeakMap<HTMLVideoElement, () => void>();
+/** 同一 <video> 上待执行的交互动作（可与静音降级叠加，不互相覆盖）。 */
+const bgVideoGestureActions = new WeakMap<HTMLVideoElement, Array<() => void>>();
+
+/**
+ * 浏览器是否已有用户激活（决定能否「带声音」自动播放）。
+ * 缺失 navigator.userActivation 时保守返回 false —— 先静音播，等首次交互再恢复声音。
+ */
+function hasUserActivation(): boolean {
+  try {
+    const ua = (navigator as Navigator & { userActivation?: { hasBeenActive?: boolean } }).userActivation;
+    return ua !== undefined && ua.hasBeenActive === true;
+  } catch {
+    return false;
+  }
+}
+
+/** 清掉某个背景 <video> 上的交互监听与待执行动作。 */
+function clearBgVideoGesture(video: HTMLVideoElement): void {
+  const cleanup = bgVideoGestureCleanup.get(video);
+  if (cleanup) {
+    cleanup();
+    bgVideoGestureCleanup.delete(video);
+  }
+  bgVideoGestureActions.delete(video);
+}
+
+/**
+ * 挂一次性「首次用户交互」监听（pointerdown / keydown，捕获阶段）。
+ * 同一个 <video> 上重复调用只追加动作、不覆盖已有监听，避免丢掉更早登记的动作
+ * （例如「静音也播不动 → 交互后重播」与「有声音开关 → 交互后恢复声音」会同时登记）。
+ */
+function armBgVideoGesture(video: HTMLVideoElement, action: () => void): void {
+  const pending = bgVideoGestureActions.get(video);
+  if (pending) {
+    pending.push(action);
+    return;
+  }
+  const actions: Array<() => void> = [action];
+  bgVideoGestureActions.set(video, actions);
+  let done = false;
+  const run = (): void => {
+    if (done) return;
+    done = true;
+    cleanup();
+    for (const act of actions) act();
+  };
+  const cleanup = (): void => {
+    window.removeEventListener('pointerdown', run, true);
+    window.removeEventListener('keydown', run, true);
+    bgVideoGestureCleanup.delete(video);
+    bgVideoGestureActions.delete(video);
+  };
+  window.addEventListener('pointerdown', run, true);
+  window.addEventListener('keydown', run, true);
+  bgVideoGestureCleanup.set(video, cleanup);
+}
+
+/**
+ * 让一个背景 <video> 播起来，并统一处理浏览器自动播放策略（单张快路径与轮播共用）。
+ * - 目标静音：直接 play()。已在播放时再调 play() 是空操作，故可在每次配置同步时安全重调。
+ * - 目标有声：已有用户激活 → 带声播；尚无激活 → 先静音播（背景不空窗），
+ *   并登记「首次交互后恢复声音」。
+ * - play() 被拒：有声被拦 → 降级静音重播；静音也被拦（站点禁用自动播放）→ 留首帧，等交互再试。
+ *
+ * ⚠️ 绝不可以在没有用户激活时把 muted 置为 false：Chromium 的自动播放策略不允许无激活的
+ * 有声播放，会把已经在播的静音元素直接停住；而轮播在列表/间隔未变时不会重建 <video>，
+ * 于是画面永远停住，直到用户手动切主题（既有激活、列表又变了才重新创建并播放）。
+ */
+function playBgVideo(video: HTMLVideoElement, wantMuted: boolean): void {
+  clearBgVideoGesture(video);
+  const audible = !wantMuted;
+  const canBeAudible = audible && hasUserActivation();
+  video.muted = !canBeAudible;
+  const start = (): void => {
+    const played = video.play();
+    if (played && typeof played.catch === 'function') {
+      played.catch(() => {
+        if (!video.isConnected) return;
+        if (!video.muted) {
+          // 有声自动播放被拦：降级为静音循环，背景不放空。
+          video.muted = true;
+          start();
+          return;
+        }
+        // 连静音自动播放都被拦（站点策略）：留首帧，等首次交互再试。
+        armBgVideoGesture(video, start);
+      });
+    }
+  };
+  start();
+  if (audible && !canBeAudible) {
+    armBgVideoGesture(video, () => {
+      if (!video.isConnected) return;
+      video.muted = false;
+      start();
+    });
+  }
+}
 
 /** 移除视频背景 <video> 元素并清理声音恢复监听。 */
 function removeBgVideo(): void {
   const v = document.getElementById('xiao-theme-video') as HTMLVideoElement | null;
   if (v) {
     v.pause();
+    clearBgVideoGesture(v);
     v.remove();
-  }
-  if (bgVideoGestureCleanup) {
-    bgVideoGestureCleanup();
-    bgVideoGestureCleanup = null;
   }
 }
 
@@ -752,33 +851,9 @@ function syncBgVideo(cfg: XiaoConfig, active: boolean): void {
     v.dataset.src = src;
     v.src = src;
   }
-  const wantMuted = cfg.backgroundVideoAudio !== true;
-  if (v.muted !== wantMuted) v.muted = wantMuted;
-  const p = v.play();
-  if (p && typeof p.catch === 'function') {
-    p.catch(() => {
-      // 自动播放带声音可能被浏览器拦截：先静音循环显示背景，等用户首次交互后再恢复声音。
-      if (!v || document.getElementById('xiao-theme-video') !== v) return;
-      if (!wantMuted && !bgVideoGestureCleanup) {
-        if (v.muted === false) v.muted = true;
-        void v.play().catch(() => {});
-        const onGesture = (): void => {
-          v!.muted = false;
-          void v!.play().catch(() => {});
-          if (bgVideoGestureCleanup) {
-            bgVideoGestureCleanup();
-            bgVideoGestureCleanup = null;
-          }
-        };
-        bgVideoGestureCleanup = () => {
-          window.removeEventListener('pointerdown', onGesture, true);
-          window.removeEventListener('keydown', onGesture, true);
-        };
-        window.addEventListener('pointerdown', onGesture, true);
-        window.addEventListener('keydown', onGesture, true);
-      }
-    });
-  }
+  // 自动播放策略统一交给 playBgVideo：目标有声但尚无用户激活时，它会先静音播并登记
+  // 「首次交互后恢复声音」，而不是直接写 muted=false（那会把已播放的元素停住）。
+  playBgVideo(v, cfg.backgroundVideoAudio !== true);
 }
 
 /**
@@ -946,6 +1021,7 @@ function clearLayer(el: HTMLElement): void {
     } catch {
       /* 忽略：暂停失败不影响后续移除 */
     }
+    clearBgVideoGesture(video);
     video.removeAttribute('src');
     try {
       video.load();
@@ -978,13 +1054,18 @@ function ensureRotationLayers(): [HTMLElement, HTMLElement] {
   return layers;
 }
 
-/** 声音开关软更新：只改现有 <video> 的 muted，不重启轮播。 */
+/**
+ * 声音开关软更新：不重启轮播，只让现有 <video> 对齐「静音 / 播放」状态。
+ * 走 playBgVideo 而不是直接写 muted：无用户激活时直接置 muted=false 会把正在播放的
+ * 视频停住（Chromium 自动播放策略），而轮播在列表/间隔未变时不会重建元素，画面就此卡住；
+ * playBgVideo 会保持静音并登记「首次交互后恢复声音」，同时把被停住的视频重新拉起。
+ */
 function applyRotationAudio(cfg: XiaoConfig): void {
   if (rotation.layers === null) return;
-  const muted = cfg.backgroundVideoAudio !== true;
+  const wantMuted = cfg.backgroundVideoAudio !== true;
   for (const el of rotation.layers) {
     const video = el.querySelector('video');
-    if (video instanceof HTMLVideoElement) video.muted = muted;
+    if (video instanceof HTMLVideoElement) playBgVideo(video, wantMuted);
   }
 }
 
@@ -1039,7 +1120,6 @@ function prepareLayer(
   const url = '/xiao-bg?i=' + entryIndex + '&p=' + encodeURIComponent(entry.path) + '&v=' + bgVersion;
   if (entry.dynamic === true && isVideoPath(entry.path)) {
     const video = document.createElement('video');
-    video.muted = cfg.backgroundVideoAudio !== true;
     video.loop = true;
     video.autoplay = true;
     video.playsInline = true;
@@ -1060,17 +1140,9 @@ function prepareLayer(
     });
     video.addEventListener('canplay', () => done(readDuration()));
     video.addEventListener('error', () => done(null));
-    const played = video.play();
-    if (played && typeof played.catch === 'function') {
-      played.catch(() => {
-        // 带声音自动播放可能被浏览器拦截：先静音播起来（背景不放空），轮播照常推进。
-        if (video.muted) return;
-        video.muted = true;
-        void video.play().catch(() => {
-          /* 静音仍失败：保留首帧，等待下一次切换 */
-        });
-      });
-    }
+    // 自动播放策略统一交给 playBgVideo：无用户激活时先静音播（轮播照常推进），
+    // 有声被拦时降级静音，并在首次交互后恢复声音。绝不在这里直接写 muted=false。
+    playBgVideo(video, cfg.backgroundVideoAudio !== true);
     return;
   }
   const probe = new Image();

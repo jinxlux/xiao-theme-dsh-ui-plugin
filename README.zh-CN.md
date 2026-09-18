@@ -125,6 +125,7 @@ dsh plugin --profile web add "D:/.../xiao-ui-theme-ts"
 - 默认头像 / 背景使用**包内相对路径**（`resource/avatar.png`），跨机器可读；
   构建后请保持 `resource/` 与 `lib/` 同层（当前结构成立）。`resource/bg.svg` 系早期遗留、已不再使用。
 - **视频背景兼容性**：跨浏览器最稳的是 H.264 (AVC) + AAC 的 `.mp4`，或 VP8/VP9 的 `.webm`。部分浏览器无法解码 HEVC(H.265) 的 `.mp4`/`.mov`；`.avi`/`.mkv` 不受支持。
+- **视频背景的声音需要「每次页面加载后交互一次」**：浏览器（Chrome / Edge / Firefox）**恒允许静音自动播放**，但在你与页面交互之前**一律拦截带声自动播放**——这是页面加载级别的浏览器策略，不是本插件的开关。因此开着「视频背景声音」时，启动 DSH（或刷新页面）后背景视频会**先静音播放**；你在界面上任意点击一下、或按一次键，声音就自动接上，**不必重新选主题**。该开关只能表达「想要声音」，命令不动浏览器。若希望第一帧就有声：给该来源（`http://127.0.0.1:3080`）配置企业策略 `AutoplayAllowlist`，或用 `--autoplay-policy=no-user-gesture-required` 启动浏览器（仅调试用）；否则干脆关掉声音开关，让背景纯静音。详见 [Autoplay policy in Chrome](https://developer.chrome.com/blog/autoplay/)。
 - 魈式语气提示词依赖 DSH 的 `systemPrompt` 组装。若所用 agent 预设会把提示**过滤成只剩 persona**，
   或使用了 **complete persona**，该语气在对应会话可能不出现（这是预设行为，不是插件故障）。
 - 「侧栏不透明度」通过 DSH 布局的 `sidebarCol` 列与原生右栏面板 `data-sidebar-right-panel` 生效。
