@@ -114,3 +114,27 @@ test('videoPlaythroughPlan: switch time = max(interval, duration)', () => {
     switchAfterMs: 5000,
   });
 });
+
+test('backgroundHasVideo: 只有视频背景才显示喇叭按钮', () => {
+  const cfg = (over) => ({
+    enabled: true,
+    backgroundEnabled: true,
+    backgroundImagePath: '',
+    backgroundDynamic: false,
+    backgroundList: [],
+    ...over,
+  });
+  // 单张快路径（判定与 syncBackgroundSingle 同源：backgroundImagePath + backgroundDynamic）
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundImagePath: 'a.mp4', backgroundDynamic: true })), true);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundImagePath: 'a.webm', backgroundDynamic: true })), true);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundImagePath: 'a.gif', backgroundDynamic: true })), false);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundImagePath: 'a.png', backgroundDynamic: false })), false);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundImagePath: 'a.mp4', backgroundDynamic: false })), false);
+  // 轮播（≥2 项）：任意一项是视频就显示 —— 静态 / GIF 项本身没有声音
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundList: [{ path: 'a.png' }, { path: 'b.mp4', dynamic: true }] })), true);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundList: [{ path: 'a.mp4', dynamic: true }, { path: 'b.png' }] })), true);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundList: [{ path: 'a.png' }, { path: 'b.gif', dynamic: true }] })), false);
+  // 门控：总开关 / 背景开关关掉时不该出现
+  assert.equal(mod.backgroundHasVideo(cfg({ enabled: false, backgroundImagePath: 'a.mp4', backgroundDynamic: true })), false);
+  assert.equal(mod.backgroundHasVideo(cfg({ backgroundEnabled: false, backgroundImagePath: 'a.mp4', backgroundDynamic: true })), false);
+});

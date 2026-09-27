@@ -121,6 +121,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
   useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
   videoAudio: { zh: '视频背景声音', en: 'Background video audio' },
+  soundUnmute: { zh: '开启视频背景声音', en: 'Turn on background video sound' },
+  soundMute: { zh: '关闭视频背景声音（静音）', en: 'Mute background video' },
   // —— 多背景轮播 ——
   bgPathFirstMulti: { zh: '背景图路径（第 1 项）', en: 'Background path (item 1)' },
   bgListTitle: { zh: '多背景轮播', en: 'Multi-background rotation' },
@@ -1037,6 +1039,19 @@ function effectiveBackgroundList(cfg: XiaoConfig): BackgroundEntry[] {
   return list;
 }
 
+/**
+ * 当前背景里是否存在视频项 —— 决定最外层那个「喇叭」快捷按钮要不要出现。
+ * 与 syncBackground 的判定保持同源：≥2 项走轮播（列表里任意一项是视频就显示，静态 / GIF 项本身没有声音），
+ * 否则走单张快路径（以 backgroundImagePath / backgroundDynamic 为准，和 syncBackgroundSingle 一致）。
+ * 关掉总开关或背景开关时一律不显示（那时根本没有背景在放）。
+ */
+export function backgroundHasVideo(cfg: XiaoConfig): boolean {
+  if (cfg.enabled === false || cfg.backgroundEnabled === false) return false;
+  const list = effectiveBackgroundList(cfg);
+  if (list.length >= 2) return list.some((entry) => entry.dynamic === true && isVideoPath(entry.path));
+  return cfg.backgroundDynamic === true && isVideoPath(cfg.backgroundImagePath || '');
+}
+
 /** 清空一层：暂停并释放可能存在的 <video>，清掉背景图（不删元素本身）。 */
 function clearLayer(el: HTMLElement): void {
   const video = el.querySelector('video');
@@ -1478,7 +1493,25 @@ function writeMascotStored(pos: { x: number; y: number } | null, hidden: boolean
 }
 
 /** 吉祥物徽章组件：青玉底金边 + 头像 + 可配置的标题/副标（位置与收起状态本地持久化）。 */
-function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title: string; subtitle: string }): React.ReactElement {
+/** 徽章里的喇叭按钮（只有视频背景时才由调用方传进来；label 已按当前语言取好）。 */
+interface BadgeSound {
+  audible: boolean;
+  label: string;
+  onToggle: () => void;
+}
+
+function XiaoBadge({
+  avatarPath,
+  title,
+  subtitle,
+  sound,
+}: {
+  avatarPath: string;
+  title: string;
+  subtitle: string;
+  /** 视频背景的快捷静音按钮；静态 / GIF 背景传 null（不占位）。 */
+  sound: BadgeSound | null;
+}): React.ReactElement {
   const rootRef = React.useRef<HTMLDivElement>(null);
   const [pos, setPos] = React.useState<{ x: number; y: number } | null>(() => {
     const stored = readMascotStored();
@@ -1634,6 +1667,25 @@ function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title:
         React.createElement('div', { className: 'xiao-title' }, title),
         React.createElement('div', { className: 'xiao-sub' }, subtitle),
       ),
+      sound
+        ? React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: 'xiao-close xiao-sound' + (sound.audible ? '' : ' xiao-sound-off'),
+              'aria-pressed': sound.audible,
+              'aria-label': sound.label,
+              title: sound.label,
+              // 徽章整体是可拖拽的：按钮必须吃掉 pointerdown，否则点一下就开始拖
+              onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => e.stopPropagation(),
+              onClick: (e: React.MouseEvent<HTMLButtonElement>) => {
+                e.stopPropagation();
+                sound.onToggle();
+              },
+            },
+            sound.audible ? '\u{1F50A}' : '\u{1F507}',
+          )
+        : null,
       React.createElement(
         'button',
         {
@@ -1650,15 +1702,27 @@ function XiaoBadge({ avatarPath, title, subtitle }: { avatarPath: string; title:
   );
 }
 
-/** 悬浮窗组件：订阅配置，enabled=false 时隐藏。 */
+/**
+ * 悬浮窗组件：订阅配置，enabled=false 时隐藏。
+ * 背景是视频时，把喇叭按钮**放进吉祥物徽章里**（不额外占屏幕位置）；静态图 / GIF 传 null。
+ * 按钮写的是设置页同一个字段 backgroundVideoAudio，两边永远同步。
+ */
 function XiaoOverlay({ store }: { store: ConfigStore }): React.ReactElement | null {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
   if (snapshot.enabled === false) return null;
+  const audible = snapshot.backgroundVideoAudio === true;
   return React.createElement(XiaoBadge, {
     avatarPath: snapshot.avatarPath || CLIENT_DEFAULT_CONFIG.avatarPath,
     title: mascotText(snapshot.mascotTitle, 'title'),
     subtitle: mascotText(snapshot.mascotSubtitle, 'subtitle'),
+    sound: backgroundHasVideo(snapshot)
+      ? {
+          audible,
+          label: t(audible ? 'soundMute' : 'soundUnmute'),
+          onToggle: () => void saveConfig(store, { backgroundVideoAudio: !audible }),
+        }
+      : null,
   });
 }
 
@@ -3043,6 +3107,10 @@ const XIAO_CSS: string[] = [
   '.xiao-close:hover{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-bg-layer-1);}',
   '.xiao-tab{border:2px solid #C9A96B;background:linear-gradient(135deg,var(--dsw-alias-bg-overlay),var(--dsw-alias-bg-layer-1));cursor:grab;width:44px;height:44px;border-radius:50%;font-size:20px;line-height:1;box-shadow:0 6px 20px rgba(20,60,50,0.30);animation:xiao-float 3s ease-in-out infinite alternate;}',
   '.xiao-tab:hover{border-color:var(--dsw-alias-state-warn-primary);}',
+// 徽章内的喇叭：复用 .xiao-close 的小圆按钮外观，只在有视频背景时出现（不额外占屏幕位置）。
+'.xiao-sound{font-size:15px;}',
+'.xiao-sound[aria-pressed="true"]{color:var(--dsw-alias-brand-primary);}',
+'.xiao-sound-off{opacity:0.55;}',
   '.xiao-wind{font-size:14px;letter-spacing:6px;opacity:0.9;animation:xiao-float 3s ease-in-out infinite alternate;}',
   '@keyframes xiao-float{from{transform:translateY(0);}to{transform:translateY(-5px);}}',
   '.xiao-settings{display:flex;flex-direction:column;gap:6px;padding:4px 0;max-width:640px;}',
