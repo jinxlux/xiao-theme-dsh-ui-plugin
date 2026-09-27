@@ -80,30 +80,6 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 > - Before `v0.1.5-alpha.1` → the previous release `0.11.x`.
 > - The legacy anchors (`data-dsh-panel` / `data-dsh-pane`) are still in the CSS, so an old combination will not error or crash — only the **look is not guaranteed**.
 
-### How the theme paints the shell
-
-| Region | Painted by | Value |
-| --- | --- | --- |
-| Frame `#root > div` | **nothing** (keeps only `backdrop-filter`) | — |
-| Center column | the column itself | `panelOpacity` (UI opacity) |
-| Left sidebar | the column itself | `sidebarOpacity` (sidebar opacity) |
-| Right panel (frame) | transparent | — |
-| Right panel **inner surfaces** (cards, tab strip, file tree, preview) | inner tokens | ≈0.8 tier, its own variable |
-
-The right panel is deliberately **not** painted with the 0.85 sidebar tier: it is often an *empty* panel, and a flat 0.85 fill there reads as a solid block instead of a translucent surface.
-
-### Version-specific behaviour the theme compensates for
-
-| Component | Difference | What the theme does |
-| --- | --- | --- |
-| DSH `0.1.7-alpha.1` and newer | the right panel frame no longer paints its own background — inner surfaces do — and the frame carries `data-sidebar-right-session` | frame forced transparent; `--dsw-alias-bg-base` / `--dsw-alias-bg-layer-1/2/3` inside the panel subtree are replaced with `--xiao-panel-ovl-*` |
-| DSH `v0.1.5-alpha.1` – `0.1.6-alpha.2` | the right panel **paints its own background** (`.P3OORG_panel{background:var(--dsw-alias-bg-base)}`) and nothing inside paints | for that generation only (`:not([data-sidebar-right-session])`) the frame takes `--xiao-panel-ovl-l1`; otherwise the panel shows fully through |
-| DSH `0.1.7-rc.2` (Windows desktop) | paints `--dsw-alias-bg-base` on `.centerCol` / `.rightbarCol` under `data-windows-titlebar` | forces those columns transparent so the frosted background stays visible |
-| DSH `0.1.7-rc.2` | adds `--dsw-alias-bg-document-preview` for the file / PDF preview | token is added to the palette and wired inside the right panel |
-| DSH before `v0.1.5-alpha.1` | no official right panel: `data-sidebar-right-panel` does not exist and the right column class is `detailsCol` | the panel rules simply never match; `detailsCol` keeps using the old sidebar anchor |
-
-Checked 2026-09-26 by unpacking every published build (11 × `dsh-client-ui-sidebar-right`, 6 × `dsh-client-ui-layout`): `v0.1.5-alpha.1` – `0.1.6-alpha.2` paint their own panel and have no `data-sidebar-right-session`; `0.1.7-alpha.1` and newer do not paint it and carry the marker; layouts before `v0.1.5-alpha.1` contain no `data-sidebar-right-panel` at all. Confirmed live on web `0.1.5-rc.3` and desktop `0.1.7-rc.2`.
-
 ## Install online (quick)
 
 1. Make sure the `dsh` command is available.

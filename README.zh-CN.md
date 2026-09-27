@@ -86,30 +86,6 @@ Web 界面做主题：配色、吉祥物徽章、背景、注入语气都能自�
 > - `v0.1.5-alpha.1` 之前 → 本版本之前的 `0.11.x`。
 > - CSS 里保留了旧锚点（`data-dsh-panel` / `data-dsh-pane`），所以旧组合不会报错或崩溃，只是**观感不保证**。
 
-### 主题如何给外壳上色
-
-| 区域 | 谁来涂 | 取值 |
-| --- | --- | --- |
-| 框架 `#root > div` | **不涂**（只保留 `backdrop-filter`） | — |
-| 中列 | 中列自己 | `panelOpacity`（界面不透明度） |
-| 左栏 | 左栏列自己 | `sidebarOpacity`（侧栏不透明度） |
-| 右栏面板外框 | 透明 | — |
-| 右栏面板**内部表面**（卡片、tab 条、文件树、预览） | 内部 token | ≈0.8 档，独立变量 |
-
-右栏**刻意不用 0.85 的侧栏档**：它常常是一块**空面板**，0.85 的平涂在空面板上就是一块实色，而不是半透的面。
-
-### 主题为版本差异做的补偿
-
-| 组件 | 差异 | 主题的动作 |
-| --- | --- | --- |
-| DSH `0.1.7-alpha.1` 及更新 | 右栏面板外框不再自绘底，改由内部表面着色，且外框带 `data-sidebar-right-session` 标记 | 外框置透明；面板子树内的 `--dsw-alias-bg-base` / `--dsw-alias-bg-layer-1/2/3` 换成 `--xiao-panel-ovl-*` |
-| DSH `v0.1.5-alpha.1` ~ `0.1.6-alpha.2` | 右栏面板**自己画底**（`.P3OORG_panel{background:var(--dsw-alias-bg-base)}`），面板内部没有任何背景 | 只对这一档（`:not([data-sidebar-right-session])`）让外框吃 `--xiao-panel-ovl-l1`，否则整块全透 |
-| DSH `0.1.7-rc.2`（Windows 桌面） | 在 `data-windows-titlebar` 下给 `.centerCol` / `.rightbarCol` 铺 `--dsw-alias-bg-base` | 强制这两列透明，磨砂背景照常透出 |
-| DSH `0.1.7-rc.2` | 新增 `--dsw-alias-bg-document-preview` 给文件 / PDF 预览 | 该 token 已补进色板，并在右栏子树内接线 |
-| DSH `v0.1.5-alpha.1` 之前 | 没有官方右栏：`data-sidebar-right-panel` 不存在，右列 class 是 `detailsCol` | 面板规则天然不命中；`detailsCol` 沿用原有的侧栏锚点 |
-
-2026-09-26 核对：把 npm 上已发布的 11 个 `dsh-client-ui-sidebar-right` 与 6 个 `dsh-client-ui-layout` 包逐个解开验证 —— `v0.1.5-alpha.1` ~ `0.1.6-alpha.2` 面板自绘、无 `data-sidebar-right-session`；`0.1.7-alpha.1` 起面板不自绘、带该标记；`v0.1.5-alpha.1` 之前的 layout 里**根本没有** `data-sidebar-right-panel`。web `0.1.5-rc.3` 与桌面 `0.1.7-rc.2` 实机确认。
-
 ## 在线安装（在线快速安装）
 
 1. 确保安装 dsh 命令

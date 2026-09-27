@@ -80,30 +80,6 @@ DeepSeek Harness の Web インターフェイスに、高度にカスタマイ�
 > - `v0.1.5-alpha.1` より前 → 前リリース `0.11.x`。
 > - 旧アンカー（`data-dsh-panel` / `data-dsh-pane`）は CSS に残しているため、旧構成でもエラーやクラッシュはしません —— **見た目のみ保証外**です。
 
-### テーマの塗り分けモデル
-
-| 領域 | 塗る主体 | 値 |
-| --- | --- | --- |
-| フレーム `#root > div` | **塗らない**（`backdrop-filter` のみ維持） | — |
-| 中央カラム | カラム自身 | `panelOpacity`（UI 不透明度） |
-| 左サイドバー | カラム自身 | `sidebarOpacity`（サイドバー不透明度） |
-| 右パネル外枠 | 透明 | — |
-| 右パネル**内部サーフェス**（カード / タブ帯 / ファイルツリー / プレビュー） | 内部トークン | 約 0.8 段階（専用変数） |
-
-右パネルは**意図的に 0.85 のサイドバー段階を使いません**：右パネルはしばしば**空**で、0.85 の均一塗りは半透明の面ではなく「ベタ塗りのブロック」に見えるためです。
-
-### バージョン差への補償
-
-| コンポーネント | 差異 | テーマの対応 |
-| --- | --- | --- |
-| DSH `0.1.7-alpha.1` 以降 | 右パネル外枠が自前で塗らなくなり、内部サーフェスが塗る。外枠は `data-sidebar-right-session` を持つ | 外枠を透明にし、パネル配下の `--dsw-alias-bg-base` / `--dsw-alias-bg-layer-1/2/3` を `--xiao-panel-ovl-*` に差し替え |
-| DSH `v0.1.5-alpha.1` 〜 `0.1.6-alpha.2` | 右パネルが**自分で下地を塗る**（`.P3OORG_panel{background:var(--dsw-alias-bg-base)}`）。内部は何も塗らない | この世代だけ（`:not([data-sidebar-right-session])`）外枠に `--xiao-panel-ovl-l1` を塗る。でなければパネルが完全に透ける |
-| DSH `0.1.7-rc.2`（Windows デスクトップ） | `data-windows-titlebar` 下で `.centerCol` / `.rightbarCol` に `--dsw-alias-bg-base` を塗る | 両カラムを強制透明にし、磨りガラス背景を維持 |
-| DSH `0.1.7-rc.2` | ファイル / PDF プレビュー用に `--dsw-alias-bg-document-preview` を追加 | パレットに追加し、右パネル配下で配線 |
-| DSH `v0.1.5-alpha.1` より前 | 公式右パネルなし：`data-sidebar-right-panel` は存在せず、右カラムの class は `detailsCol` | パネル規則はそもそも一致しない。`detailsCol` は従来のサイドバーアンカーを継続 |
-
-2026-09-26 検証：npm に公開済みの全ビルド（`dsh-client-ui-sidebar-right` 11 件、`dsh-client-ui-layout` 6 件）を展開して確認 —— `v0.1.5-alpha.1` 〜 `0.1.6-alpha.2` はパネル自前描画かつ `data-sidebar-right-session` 無し、`0.1.7-alpha.1` 以降は自前描画せず同マーカー有り、`v0.1.5-alpha.1` より前の layout には `data-sidebar-right-panel` が**一切存在しません**。web `0.1.5-rc.3` とデスクトップ `0.1.7-rc.2` で実機確認済み。
-
 ## オンラインインストール（クイック）
 
 1. `dsh` コマンドが利用可能であることを確認します。

@@ -80,30 +80,6 @@ DeepSeek Harness의 웹 인터페이스에 고도로 사용자 지정 가능한 
 > - `v0.1.5-alpha.1` 이전 → 이전 릴리스 `0.11.x`.
 > - 레거시 앵커(`data-dsh-panel` / `data-dsh-pane`)는 CSS 에 남아 있어 구버전 조합도 에러/크래시는 없습니다 — **보기만 보장 밖**입니다.
 
-### 테마가 셸을 칠하는 방식
-
-| 영역 | 칠하는 주체 | 값 |
-| --- | --- | --- |
-| 프레임 `#root > div` | **칠하지 않음** (`backdrop-filter` 만 유지) | — |
-| 중앙 열 | 열 자신 | `panelOpacity` (UI 불투명도) |
-| 왼쪽 사이드바 | 열 자신 | `sidebarOpacity` (사이드바 불투명도) |
-| 오른쪽 패널 외곽 | 투명 | — |
-| 오른쪽 패널 **내부 표면**(카드 / 탭 바 / 파일 트리 / 미리보기) | 내부 토큰 | 약 0.8 단계(전용 변수) |
-
-오른쪽 패널은 **의도적으로 0.85 사이드바 단계를 쓰지 않습니다**: 오른쪽 패널은 종종 **비어 있어서**, 0.85 의 균일한 채움은 반투명 면이 아니라 "단색 블록"으로 보입니다.
-
-### 버전 차이 보정
-
-| 구성 요소 | 차이 | 테마의 대응 |
-| --- | --- | --- |
-| DSH `0.1.7-alpha.1` 이상 | 오른쪽 패널 외곽이 더 이상 자체 채색하지 않고 내부 표면이 칠함. 외곽에 `data-sidebar-right-session` 마커가 있음 | 외곽을 투명하게 하고 패널 하위의 `--dsw-alias-bg-base` / `--dsw-alias-bg-layer-1/2/3` 를 `--xiao-panel-ovl-*` 로 교체 |
-| DSH `v0.1.5-alpha.1` ~ `0.1.6-alpha.2` | 오른쪽 패널이 **스스로 바탕을 칠함**(`.P3OORG_panel{background:var(--dsw-alias-bg-base)}`), 내부는 아무것도 칠하지 않음 | 이 세대에만(`:not([data-sidebar-right-session])`) 외곽이 `--xiao-panel-ovl-l1` 을 사용. 그렇지 않으면 패널이 완전히 비쳐 보임 |
-| DSH `0.1.7-rc.2` (Windows 데스크톱) | `data-windows-titlebar` 아래에서 `.centerCol` / `.rightbarCol` 에 `--dsw-alias-bg-base` 를 칠함 | 두 열을 강제로 투명하게 하여 프로스티드 배경 유지 |
-| DSH `0.1.7-rc.2` | 파일/PDF 미리보기용 `--dsw-alias-bg-document-preview` 추가 | 팔레트에 추가하고 오른쪽 패널 하위에서 배선 |
-| DSH `v0.1.5-alpha.1` 이전 | 공식 오른쪽 패널 없음: `data-sidebar-right-panel` 이 존재하지 않고 오른쪽 열 class 는 `detailsCol` | 패널 규칙이 애초에 일치하지 않음. `detailsCol` 은 기존 사이드바 앵커 유지 |
-
-2026-09-26 검증: npm 에 공개된 모든 빌드(`dsh-client-ui-sidebar-right` 11개, `dsh-client-ui-layout` 6개)를 풀어 확인 — `v0.1.5-alpha.1` ~ `0.1.6-alpha.2` 는 패널 자체 채색이며 `data-sidebar-right-session` 없음, `0.1.7-alpha.1` 이상은 자체 채색이 없고 해당 마커가 있음, `v0.1.5-alpha.1` 이전 layout 에는 `data-sidebar-right-panel` 이 **전혀 없음**. 웹 `0.1.5-rc.3` 과 데스크톱 `0.1.7-rc.2` 에서 실기 확인.
-
 ## 온라인 설치 (빠르게)
 
 1. `dsh` 명령이 사용 가능한지 확인합니다.
