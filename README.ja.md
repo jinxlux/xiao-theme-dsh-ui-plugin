@@ -1,4 +1,4 @@
-> **Language / 言語：** [English](../README.md) · [简体中文](./README.zh-CN.md) · **日本語**（現在） · [한국어](./README.ko.md)
+> **Language / 言語：** [English](./README.md) · [简体中文](./README.zh-CN.md) · **日本語**（現在） · [한국어](./README.ko.md)
 
 # xiao-ui-theme-ts
 
@@ -10,7 +10,40 @@ DeepSeek Harness の Web インターフェイスに、高度にカスタマイ�
 
 ## プレビュー
 
-<img width="2515" height="1288" alt="Screenshot 2026-08-23 181933" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+<details open>
+<summary><b>ライトモード（魈・既定）</b></summary>
+
+<img width="2515" height="1288" alt="魈テーマ — ライトモード（既定）" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+
+</details>
+
+<details>
+<summary><b>ダークモード</b></summary>
+
+<img width="1873" height="912" alt="魈テーマ — ダークモード" src="./resource/screenShortsReadMe/xiaoDarkMode.png" />
+
+</details>
+
+<details>
+<summary><b>別テーマへの切り替え</b></summary>
+
+<img width="1864" height="936" alt="別のテーマに切り替え" src="./resource/screenShortsReadMe/otherThemeSwitch.png" />
+
+</details>
+
+<details>
+<summary><b>設定ページ</b></summary>
+
+<img width="1213" height="882" alt="テーマ設定ページ — 上部" src="./resource/screenShortsReadMe/settingPageEnUp.png" />
+
+</details>
+
+<details>
+<summary><b>設定ページ（続き）</b></summary>
+
+<img width="1216" height="889" alt="テーマ設定ページ — 下部" src="./resource/screenShortsReadMe/settingPageENButtom.png" />
+
+</details>
 
 ## 機能
 

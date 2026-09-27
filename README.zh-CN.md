@@ -1,4 +1,4 @@
-> **语言 / Language：** [English](../README.md) · **简体中文**（当前） · [日本語](./README.ja.md) · [한국어](./README.ko.md)
+> **语言 / Language：** [English](./README.md) · **简体中文**（当前） · [日本語](./README.ja.md) · [한국어](./README.ko.md)
 
 # xiao-ui-theme-ts
 
@@ -16,7 +16,40 @@ Web 界面做主题：配色、吉祥物徽章、背景、注入语气都能自�
 
 ## 示例
 
-<img width="2515" height="1288" alt="Screenshot 2026-08-23 181933" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+<details open>
+<summary><b>浅色模式（魈，默认）</b></summary>
+
+<img width="2515" height="1288" alt="魈主题——浅色模式（默认）" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+
+</details>
+
+<details>
+<summary><b>深色模式</b></summary>
+
+<img width="1873" height="912" alt="魈主题——深色模式" src="./resource/screenShortsReadMe/xiaoDarkMode.png" />
+
+</details>
+
+<details>
+<summary><b>切换其它主题</b></summary>
+
+<img width="1864" height="936" alt="切换到其它主题" src="./resource/screenShortsReadMe/otherThemeSwitch.png" />
+
+</details>
+
+<details>
+<summary><b>设置页</b></summary>
+
+<img width="1183" height="871" alt="主题设置页——上半" src="./resource/screenShortsReadMe/settingPageCNUp.png" />
+
+</details>
+
+<details>
+<summary><b>设置页（下半）</b></summary>
+
+<img width="1195" height="856" alt="主题设置页——下半" src="./resource/screenShortsReadMe/settingPageCNButtom.png" />
+
+</details>
 
 ## 功能
 

@@ -10,7 +10,40 @@ Gives the DeepSeek Harness web UI a heavily customizable theme. **By default it'
 
 ## Preview
 
-<img width="2515" height="1288" alt="Screenshot 2026-08-23 181933" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+<details open>
+<summary><b>Light mode</b></summary>
+
+<img width="2515" height="1288" alt="Xiao theme — light mode (default)" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+
+</details>
+
+<details>
+<summary><b>Dark mode</b></summary>
+
+<img width="1873" height="912" alt="Xiao theme — dark mode" src="./resource/screenShortsReadMe/xiaoDarkMode.png" />
+
+</details>
+
+<details>
+<summary><b>Switch to another theme</b></summary>
+
+<img width="1864" height="936" alt="Switched to another theme" src="./resource/screenShortsReadMe/otherThemeSwitch.png" />
+
+</details>
+
+<details>
+<summary><b>Settings page</b></summary>
+
+<img width="1213" height="882" alt="Theme settings page — top" src="./resource/screenShortsReadMe/settingPageEnUp.png" />
+
+</details>
+
+<details>
+<summary><b>Settings page (continued)</b></summary>
+
+<img width="1216" height="889" alt="Theme settings page — bottom" src="./resource/screenShortsReadMe/settingPageENButtom.png" />
+
+</details>
 
 ## Features
 

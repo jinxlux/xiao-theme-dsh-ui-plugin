@@ -1,4 +1,4 @@
-> **Language / 언어：** [English](../README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · **한국어** (현재)
+> **Language / 언어：** [English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · **한국어** (현재)
 
 # xiao-ui-theme-ts
 
@@ -10,7 +10,40 @@ DeepSeek Harness의 웹 인터페이스에 고도로 사용자 지정 가능한 
 
 ## 미리보기
 
-<img width="2515" height="1288" alt="Screenshot 2026-08-23 181933" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+<details open>
+<summary><b>라이트 모드(소, 기본)</b></summary>
+
+<img width="2515" height="1288" alt="소 테마 — 라이트 모드(기본)" src="https://github.com/user-attachments/assets/3998f58b-53db-4349-80f3-3d993c6ad3c3" />
+
+</details>
+
+<details>
+<summary><b>다크 모드</b></summary>
+
+<img width="1873" height="912" alt="소 테마 — 다크 모드" src="./resource/screenShortsReadMe/xiaoDarkMode.png" />
+
+</details>
+
+<details>
+<summary><b>다른 테마로 전환</b></summary>
+
+<img width="1864" height="936" alt="다른 테마로 전환" src="./resource/screenShortsReadMe/otherThemeSwitch.png" />
+
+</details>
+
+<details>
+<summary><b>설정 페이지</b></summary>
+
+<img width="1213" height="882" alt="테마 설정 페이지 — 상단" src="./resource/screenShortsReadMe/settingPageEnUp.png" />
+
+</details>
+
+<details>
+<summary><b>설정 페이지(계속)</b></summary>
+
+<img width="1216" height="889" alt="테마 설정 페이지 — 하단" src="./resource/screenShortsReadMe/settingPageENButtom.png" />
+
+</details>
 
 ## 기능
 
