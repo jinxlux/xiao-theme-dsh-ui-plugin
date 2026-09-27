@@ -236,6 +236,8 @@ function buildPalette(hex: string): Record<string, ThemeTokenValue> {
     '--dsw-alias-bg-layer-1': { light: bgLayer1[0], dark: bgLayer1[1] },
     '--dsw-alias-bg-layer-2': { light: bgLayer2[0], dark: bgLayer2[1] },
     '--dsw-alias-bg-overlay': { light: bgOverlay[0], dark: bgOverlay[1] },
+    // DSH 0.1.7 起文件预览/PDF 面吃这个 token（0.1.5 只吃 bg-base）；补进色板，避免它保留 DSH 的不透明中性色。
+    '--dsw-alias-bg-document-preview': { light: bgLayer1[0], dark: bgLayer1[1] },
     '--dsw-alias-border-l1': { light: border1[0], dark: border1[1] },
     '--dsw-alias-border-l2': { light: border2[0], dark: border2[1] },
     '--dsw-alias-brand-primary': { light: brand[0], dark: brand[1] },
@@ -675,6 +677,12 @@ function buildTokens(cfg: XiaoConfig): Record<string, ThemeTokenValue> {
       light: rgba(lr, lg, lb, Math.max(light - 0.14, 0.25)),
       dark: rgba(dr, dg, db, Math.max(dark - 0.14, 0.25)),
     };
+    // 文件预览/PDF 面（0.1.7 的 --dsw-alias-bg-document-preview）随「界面不透明度」：与中列同档，
+    // 保证代码/PDF 仍可读，同时不再是一块实色。
+    tokens['--dsw-alias-bg-document-preview'] = {
+      light: rgba(lr, lg, lb, light),
+      dark: rgba(dr, dg, db, dark),
+    };
   }
   return tokens;
 }
@@ -894,6 +902,17 @@ function applyBackgroundChrome(cfg: XiaoConfig): void {
   de.style.setProperty('--xiao-sidebar-ovl-dark-l1', rgba(dr, dg, db, Math.min(so + 0.04, 1)));
   de.style.setProperty('--xiao-sidebar-ovl-dark-l2', rgba(dr, dg, db, Math.min(so + 0.08, 1)));
   de.style.setProperty('--xiao-sidebar-ovl-dark-l3', rgba(dr, dg, db, Math.min(so + 0.06, 1)));
+  // 面板内层专用的一组值（**不自我引用**）：面板外框吃 --xiao-sidebar-ovl（与左栏同值），内层这些 token
+  // 供给卡片 / tab 条 / 文件树。**绝不能让它们去 var() 一个会被同时置空的变量** —— 曾经那么写过：
+  // 面板内部全部算成透明、「侧栏不透明度」对右栏失灵（踩过两次），所以单独发一份，名字带 panel。
+  // ⚠️ 取值 = **so 再减一档**（-0.06/-0.02/-0.04）：外框已经是 so，卡片若 ≥ so 就会叠成"比底更实"的白，
+  //    看着像不吃滑杆；比底略透一点，才有「底一层色、卡片再亮一点」的层次，且仍随滑杆单调变化。
+  de.style.setProperty('--xiao-panel-ovl-l1', rgba(lr, lg, lb, Math.max(so - 0.06, 0)));
+  de.style.setProperty('--xiao-panel-ovl-l2', rgba(lr, lg, lb, Math.max(so - 0.02, 0)));
+  de.style.setProperty('--xiao-panel-ovl-l3', rgba(lr, lg, lb, Math.max(so - 0.04, 0)));
+  de.style.setProperty('--xiao-panel-ovl-dark-l1', rgba(dr, dg, db, Math.max(so - 0.06, 0)));
+  de.style.setProperty('--xiao-panel-ovl-dark-l2', rgba(dr, dg, db, Math.max(so - 0.02, 0)));
+  de.style.setProperty('--xiao-panel-ovl-dark-l3', rgba(dr, dg, db, Math.max(so - 0.04, 0)));
   // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
   const frame = findFrameElement();
   if (frame) {
@@ -933,6 +952,12 @@ function syncBackgroundSingle(cfg: XiaoConfig): void {
     de.style.removeProperty('--xiao-sidebar-ovl-dark-l1');
     de.style.removeProperty('--xiao-sidebar-ovl-dark-l2');
     de.style.removeProperty('--xiao-sidebar-ovl-dark-l3');
+    de.style.removeProperty('--xiao-panel-ovl-l1');
+    de.style.removeProperty('--xiao-panel-ovl-l2');
+    de.style.removeProperty('--xiao-panel-ovl-l3');
+    de.style.removeProperty('--xiao-panel-ovl-dark-l1');
+    de.style.removeProperty('--xiao-panel-ovl-dark-l2');
+    de.style.removeProperty('--xiao-panel-ovl-dark-l3');
     de.style.removeProperty('--xiao-theme-color');
     de.style.removeProperty('--xiao-grad-a');
     de.style.removeProperty('--xiao-grad-b');
@@ -2971,20 +2996,37 @@ const XIAO_CSS: string[] = [
   // 图层是 body 的子元素、位于 #root 之前方，因此根框架的 backdrop-filter 磨砂同样会采样到它们。
   'html.xiao-bg-layers .xiao-bg-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;background-color:transparent;background-size:cover;background-position:center;background-repeat:no-repeat;opacity:0;transition:opacity ' + BG_FADE_MS + 'ms ease;}',
   'html.xiao-bg-layers .xiao-bg-layer>video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}',
-  'html.xiao-bg-on body>#root>div{background:var(--xiao-bg-ovl)!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
-  'html.xiao-bg-on body[data-ds-dark-theme]>#root>div{background:var(--xiao-bg-ovl-dark)!important;}',
-  // 左侧：DSH 自带侧栏，用「类名后缀」属性选择器（不依赖被哈希的类名前缀），浅色/深色各一变量。
-  // detailsCol 是 0.1.5 之前的右栏列名，保留仅供未升级 DSH 的用户；0.1.5-rc.1 起它已不存在。
-  'html.xiao-bg-on [class$="sidebarCol"],[class$="detailsCol"]{background:var(--xiao-sidebar-ovl)!important;}',
-  'html.xiao-bg-on body[data-ds-dark-theme] [class$="sidebarCol"],body[data-ds-dark-theme] [class$="detailsCol"]{background:var(--xiao-sidebar-ovl-dark)!important;}',
-  // 右侧：现 DSH 原生右栏面板（dsh-client-ui-sidebar-right 的 .panel，稳定锚点 data-sidebar-right-panel）。
-  // better-sidebar ≥0.19 不再自绘右栏，而是把每个 tab 注册进这块原生面板（ctx.sidebarRight /
-  // sidebar.right.pane.tab），所以这一条同时覆盖「DSH 自带右栏」与「better-sidebar 的新右栏」。
-  // 除面板底色外，还在该子树内覆盖语义背景 token：better-sidebar 的 CSS 模块（tab 条、卡片、编辑器、
-  // 文件树…）大量消费 --dsw-alias-bg-layer-1/2/3，只改面板底色的话内部表面仍是不透明的。
-  // 浮窗层（data-sidebar-right-float-host）portal 到 body，不在此子树内，故不受影响。
-  'html.xiao-bg-on [data-sidebar-right-panel]{background:var(--xiao-sidebar-ovl)!important;--dsw-alias-bg-base:var(--xiao-sidebar-ovl);--dsw-alias-bg-layer-1:var(--xiao-sidebar-ovl-l1);--dsw-alias-bg-layer-2:var(--xiao-sidebar-ovl-l2);--dsw-alias-bg-layer-3:var(--xiao-sidebar-ovl-l3);}',
-  'html.xiao-bg-on body[data-ds-dark-theme] [data-sidebar-right-panel]{background:var(--xiao-sidebar-ovl-dark)!important;--dsw-alias-bg-base:var(--xiao-sidebar-ovl-dark);--dsw-alias-bg-layer-1:var(--xiao-sidebar-ovl-dark-l1);--dsw-alias-bg-layer-2:var(--xiao-sidebar-ovl-dark-l2);--dsw-alias-bg-layer-3:var(--xiao-sidebar-ovl-dark-l3);}',
+  // ⚠️ 三区域涂色模型（web 0.1.5 与 desktop 0.1.7 共用一套；别按版本分叉，也别让同一区域涂两层）：
+  //   框架 #root>div      → 不涂色，只保留 backdrop-filter 能力（web 原本靠它铺整屏，desktop 会被 DSH 再叠一层）
+  //   中列 centerCol      → --xiao-bg-ovl        (panelOpacity，界面不透明度)
+  //   左栏 sidebarCol     → --xiao-sidebar-ovl   (sidebarOpacity，侧栏不透明度)
+  //   右栏面板            → 外框透明 + **内部表面**吃 --xiao-panel-ovl-*（≈0.8 档）
+  //      · 右栏不能直接吃 0.85：它常是空面板，0.85 的实色会变成一片平色块（实测 std=5 vs 左栏 44）；
+  //        改由内部表面（卡片/tab 条/文件树/预览）着色后，它是「透出背景的面」而不是色块。
+  // ⚠️ 改这一族规则必须遵守：① 同一选择器只允许一条 !important 规则（重复 = 后写者赢，踩过 4 次）；
+  //   ② 要中和某层，改它消费的 CSS 变量，别抢 background；③ 合入前先 grep 一遍同名选择器。
+  'html.xiao-bg-on body>#root>div{background-color:transparent!important;background-image:none!important;-webkit-backdrop-filter:blur(var(--xiao-bg-blur));backdrop-filter:blur(var(--xiao-bg-blur));}',
+  'html.xiao-bg-on [class$="centerCol"]{background-color:var(--xiao-bg-ovl)!important;background-image:none!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [class$="centerCol"]{background-color:var(--xiao-bg-ovl-dark)!important;}',
+  // 右栏列（0.1.7 起空着的一条轨道）：保持透明，别让它抢色。
+  'html.xiao-bg-on [class$="rightbarCol"]{background-color:transparent!important;background-image:none!important;}',
+  // 左栏：列吃 --xiao-sidebar-ovl；同一子树里的 SidebarRoot 还会铺一次 --dsw-specific-sidebar-fill，
+  // 把它在列上置为 transparent，消除「列 + 侧栏根」的双层叠加。detailsCol 是 0.1.5 之前的列名，留给老版本。
+  'html.xiao-bg-on [class$="sidebarCol"],[class$="detailsCol"]{background:var(--xiao-sidebar-ovl)!important;--dsw-specific-sidebar-fill:transparent!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [class$="sidebarCol"],body[data-ds-dark-theme] [class$="detailsCol"]{background:var(--xiao-sidebar-ovl-dark)!important;--dsw-specific-sidebar-fill:transparent!important;}',
+  // 右栏面板（DSH 原生 data-sidebar-right-panel；better-sidebar ≥0.19 的 tab 也注册在这里）：
+  // 外框透明（消掉与框架/列的重叠），内部表面改用专门的一组值着色（--xiao-panel-ovl-l1/l2/l3，见 applyBackgroundChrome），
+  // 这组值**不自我引用**（不再 var() 一个同时被置空的变量 —— 那样会让内部全透、滑杆失灵，踩过）。
+  'html.xiao-bg-on [data-sidebar-right-panel]{background-color:transparent!important;--xiao-sidebar-ovl:transparent;--xiao-sidebar-ovl-dark:transparent;--dsw-alias-bg-base:var(--xiao-panel-ovl-l1);--dsw-alias-bg-layer-1:var(--xiao-panel-ovl-l1);--dsw-alias-bg-layer-2:var(--xiao-panel-ovl-l2);--dsw-alias-bg-layer-3:var(--xiao-panel-ovl-l3);--dsw-alias-bg-document-preview:var(--xiao-panel-ovl-l1);--dsw-alias-bg-mask-1:transparent;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-sidebar-right-panel]{--dsw-alias-bg-base:var(--xiao-panel-ovl-dark-l1);--dsw-alias-bg-layer-1:var(--xiao-panel-ovl-dark-l1);--dsw-alias-bg-layer-2:var(--xiao-panel-ovl-dark-l2);--dsw-alias-bg-layer-3:var(--xiao-panel-ovl-dark-l3);--dsw-alias-bg-document-preview:var(--xiao-panel-ovl-dark-l1);}',
+  // ⚠️ 旧版 DSH（≤0.1.6，例如 web 0.1.5-rc.3）右栏面板是**自绘**的：.P3OORG_panel{background:var(--dsw-alias-bg-base)}，
+  // 而面板内部（panelBody / 文件树 / tab 体）没有任何背景 —— 所以上面「外框透明 + 内部表面着色」在旧版上等于整块全透（实测复现）。
+  // 0.1.7 起相反：外框 .LdcXKW_panel 不再画底（改由内部 dock/surface 画），且外框多了 data-sidebar-right-session 标记 —— 正好当版本判别：
+  //   [data-sidebar-right-panel]:not([data-sidebar-right-session]) 只有旧版命中 → 让外框自己吃 --xiao-panel-ovl-l1（同一档色，内部 token 覆盖照旧继承）。
+  // 特异性 (0,3,1) > 上面那条 (0,2,1)，稳定取胜；两版各涂一层，不叠色。
+  'html.xiao-bg-on [data-sidebar-right-panel]:not([data-sidebar-right-session]){background-color:var(--xiao-panel-ovl-l1)!important;background-image:none!important;}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-sidebar-right-panel]:not([data-sidebar-right-session]){background-color:var(--xiao-panel-ovl-dark-l1)!important;}',
+
   // 旧版 better-sidebar（<0.19）自绘的右侧面板：保留 data 属性锚点做向后兼容。
   // ⚠️ 新版把 data-dsh-panel 挪到了「底部工作台面板」上（同一元素还带 data-dsh-bottom-panel），
   // 用 :not() 把它摘掉——它压在对话区上，涂透会透出对话文字。没装该插件时匹配不到，天然无副作用。

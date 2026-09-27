@@ -35,10 +35,40 @@ export interface WebServerService {
   register(options: WebRouteRegistration): () => void;
 }
 
+/** 一个 Agent 预设的声明（@deepseek-ai/dsh-agent-preset 的 `config` 形态）。 */
+export interface AgentPresetDefinition {
+  /** 预设 id（须匹配 [a-z0-9][a-z0-9-]*）。 */
+  id: string;
+  /** 选择器里的显示名。 */
+  name?: string;
+  /** 选择器里的说明文字。 */
+  description?: string;
+  /** 排序（越小越前）。 */
+  order?: number;
+  /** 该预设挂载的 Cordis 行（`{ id, name, config }`，与 YAML 形态一致）。 */
+  plugins: unknown[];
+}
+
+/**
+ * DSH 的 Agent 预设注册表（0.1.7 起；@deepseek-ai/dsh-agent-preset-registry，服务名 `agentPresets`）。
+ * ≤0.1.6 没有这个服务，注入回调不会触发 —— 那一代改走 <DSH_HOME>/.agent-presets 目录。
+ */
+export interface AgentPresetsService {
+  /**
+   * 注册并立即挂载一个预设定义（id 重复会抛错）。
+   * @returns 异步卸载函数：释放该预设的挂载并把它从选择器里摘掉。
+   * ⚠️ **可选**：0.1.5 / 0.1.6 也有一个同名服务 `agentPresets`，但那是「目录 roster」
+   * （只有 list / read / copy / deletePreset / select），没有 register。调用前必须先判能力，
+   * 否则那一代会被这个 TypeError 打断、连文件路线都走不到（两个版本都要能用）。
+   */
+  register?(definition: AgentPresetDefinition): Promise<() => Promise<void>>;
+}
+
 /** 宿主插件依赖到的服务：key → 服务类型。 */
 export interface HostServices {
   systemPrompt: SystemPromptService;
   webServer: WebServerService;
+  agentPresets: AgentPresetsService;
 }
 
 /** `ctx.inject(...)` 回调收到的子上下文：按 key 暴露服务，并带 `effect` 生命周期。 */

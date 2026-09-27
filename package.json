@@ -1,6 +1,6 @@
 {
   "name": "xiao-ui-theme-ts",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "license": "MIT",
   "type": "module",
   "author": "jinxlux",
@@ -40,7 +40,20 @@
     "resource",
     "cordis.patch.yml"
   ],
-  "dsh": {
+  "dshCompat": {
+    "target": "0.1.7-rc.2+",
+    "dsh": {
+      "verified": ["0.1.7-rc.2"],
+      "worksWithoutBetterSidebar": ["0.1.5-rc.1", "0.1.1-rc.2"],
+      "note": "0.12.0 targets DSH 0.1.7-rc.2 and newer (native right panel + new sidebar). On 0.1.5-rc.1 and older, install theme 0.11.x instead - the one-layer-per-region painting model does not line up with their right side once better-sidebar is installed."
+    },
+    "betterSidebar": {
+      "verified": ["0.19.1"],
+      "supported": ">=0.19",
+      "legacy": "<=0.18 is not adapted to any more; legacy anchors stay in the CSS so nothing crashes, but the look is not guaranteed. Use theme 0.11.x for those installs."
+    }
+  },
+"dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },

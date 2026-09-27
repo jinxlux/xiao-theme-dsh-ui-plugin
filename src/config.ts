@@ -79,8 +79,10 @@ export interface XiaoConfig {
   mascotSubtitle: string;
   /**
    * 娱乐功能「角色空间」开关：默认 false（一键开关）。
-   * 开启时把 roleplayPersona 写成一个独立的 DSH agent preset
-   * （~/.dsh/.agent-presets/xiao-roleplay/），供新会话选择；关闭时移除该预设。
+   * 开启时把 roleplayPersona 变成一个独立的 DSH agent preset，供新会话选择；关闭时移除该预设。
+   * 两条路线按 DSH 版本自动选（Host 半实现）：
+   *   - DSH ≥ 0.1.7：用 agentPresets 服务注册声明（desktop 走这条）；
+   *   - DSH ≤ 0.1.6：写 ~/.dsh/.agent-presets/xiao-roleplay/（web 0.1.5 走这条）。
    * 受 enabled（主题总开关）约束：enabled=false 时不安装（并移除）预设——总开关关了，
    * 这个功能就真的不生效，而不是"看得见但其实还开着"。
    */

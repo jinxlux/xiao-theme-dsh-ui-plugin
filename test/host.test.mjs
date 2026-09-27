@@ -4,6 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import yaml from 'js-yaml';
 import {
   parseRange,
   isAnimatedGif,
@@ -11,6 +12,10 @@ import {
   yamlLiteralBlock,
   normalizeConfig,
   normalizeBackgroundList,
+  roleplayComposition,
+  roleplayPlugins,
+  roleplayPresetDefinition,
+  agentPresetsSupportsRegister,
 } from '../lib/index.js';
 
 test('parseRange: \u5408\u6cd5\u533a\u95f4', () => {
@@ -158,4 +163,61 @@ test('normalizeConfig: multi-background synthesis and mirroring (backward compat
   assert.equal(normalizeConfig({ backgroundInterval: 9999 }).backgroundInterval, 600);
   assert.equal(normalizeConfig({ backgroundInterval: 0 }).backgroundInterval, 2);
   assert.equal(normalizeConfig({ backgroundInterval: 'x' }).backgroundInterval, 30);
+});
+
+// —— 角色空间预设：DSH 0.1.7 起改为「服务声明」，老版本仍走目录文件，两条路线必须同构 ——
+
+test('roleplayPresetDefinition: 网络开关决定是否多挂 tool-web', () => {
+  const off = roleplayPresetDefinition('你是魈。', false);
+  assert.equal(off.id, 'xiao-roleplay');
+  assert.equal(off.order, 90);
+  assert.equal(typeof off.name, 'string');
+  assert.equal(typeof off.description, 'string');
+  assert.equal(off.plugins.length, 1);
+  assert.equal(off.plugins[0].id, 'persona');
+  assert.equal(off.plugins[0].config.prefix, '你是魈。');
+  assert.equal(off.plugins[0].config.complete, true);
+  assert.equal(off.plugins[0].config.includeRuntimeContext, false);
+
+  const on = roleplayPresetDefinition('你是魈。', true);
+  assert.equal(on.plugins.length, 2);
+  assert.deepEqual(on.plugins[1], {
+    id: 'tool-web',
+    name: '@deepseek-ai/dsh-tool-web',
+    config: { search: true, fetch: true, searchTimeoutMs: 60000 },
+  });
+  // 网络开关只影响是否多这一行，persona 行不受影响。
+  assert.deepEqual(on.plugins[0], off.plugins[0]);
+  // 说明文字随开关变化（选择器里要能看出有没有网络）。
+  assert.notEqual(on.description, off.description);
+});
+
+test('agent.cordis.yml 解析结果与 roleplayPlugins 完全同构（防两条路线漂移）', () => {
+  const persona = '你是魈。\n\n留白与空行必须原样保留。\n网络：不需要。';
+  for (const network of [false, true]) {
+    assert.deepEqual(yaml.load(roleplayComposition(persona, network)), roleplayPlugins(persona, network));
+  }
+  // 首尾空白/尾随换行的边界：YAML 的 |2- 必须剥掉尾部换行，与对象路线一致。
+  const edge = '角色设定  ';
+  assert.deepEqual(yaml.load(roleplayComposition(edge, false)), roleplayPlugins(edge, false));
+});
+test('agentPresetsSupportsRegister: 认 0.1.7 的 registry，不认 0.1.5/0.1.6 的目录 roster', () => {
+  // 0.1.7+：@deepseek-ai/dsh-agent-preset-registry 提供的 agentPresets 服务
+  assert.equal(agentPresetsSupportsRegister({ register: async () => async () => {} }), true);
+  // 0.1.5 / 0.1.6：同名服务但只有目录 roster 的方法，没有 register
+  assert.equal(
+    agentPresetsSupportsRegister({
+      list: async () => [],
+      read: async () => '',
+      copy: async () => undefined,
+      deletePreset: async () => undefined,
+      select: async () => undefined,
+    }),
+    false,
+  );
+  assert.equal(agentPresetsSupportsRegister({}), false);
+  assert.equal(agentPresetsSupportsRegister(null), false);
+  assert.equal(agentPresetsSupportsRegister(undefined), false);
+  assert.equal(agentPresetsSupportsRegister({ register: 'nope' }), false);
+  assert.equal(agentPresetsSupportsRegister('agentPresets'), false);
 });
