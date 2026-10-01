@@ -102,6 +102,23 @@ test('composeThemeTitle: 主题名原样 + 语言后缀（设置页左侧标题�
   assert.equal(mod.composeThemeTitle('魈', 'en'), 'Xiao Theme');
 });
 
+test('composeEnableThemeLabel: 总开关文案跟随主题名（默认主题=历史文案）', () => {
+  globalThis.document = { documentElement: { lang: 'zh-CN' } };
+  assert.equal(mod.composeEnableThemeLabel('白厄', 'zh'), '启用白厄主题');
+  assert.equal(mod.composeEnableThemeLabel('白厄', 'en'), 'Enable 白厄 Theme');
+  assert.equal(mod.composeEnableThemeLabel('Love', 'en'), 'Enable Love Theme');
+  assert.equal(mod.composeEnableThemeLabel('  白厄  ', 'zh'), '启用白厄主题');
+  // 内置默认主题「魈」/ 尚未取到主题名：与历史文案「启用魈主题 / Enable Xiao Theme」一致。
+  assert.equal(mod.composeEnableThemeLabel('魈', 'zh'), '启用魈主题');
+  assert.equal(mod.composeEnableThemeLabel('', 'zh'), '启用魈主题');
+  assert.equal(mod.composeEnableThemeLabel('', 'en'), 'Enable Xiao Theme');
+  // lang 传 '' 时走 t()，即按当前 <html lang> 判定。
+  assert.equal(mod.composeEnableThemeLabel('白厄', ''), '启用白厄主题');
+  globalThis.document.documentElement.lang = 'en';
+  assert.equal(mod.composeEnableThemeLabel('白厄', ''), 'Enable 白厄 Theme');
+  assert.equal(mod.composeEnableThemeLabel('', ''), 'Enable Xiao Theme');
+});
+
 test('buildPalette', () => {
   const p = mod.buildPalette('#2E8B72');
   const keys = Object.keys(p);

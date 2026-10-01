@@ -90,7 +90,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   themeTitle: { zh: '魈主题', en: 'Xiao Theme' },
   // 设置页左侧分区标题的后缀：主题名原样 + 语言后缀（英文保留前导空格，与 'Xiao Theme' 风格一致）。
   themeTitleSuffix: { zh: '主题', en: ' Theme' },
-  enableTheme: { zh: '启用魈主题', en: 'Enable Xiao theme' },
+  // 总开关文案的前缀：与 composeThemeTitle 拼成「启用{主题名}主题 / Enable {name} Theme」。
+  enableThemePrefix: { zh: '启用', en: 'Enable ' },
   themeColor: { zh: '主题颜色', en: 'Theme color' },
   voiceSection: { zh: '语气（工作会话）', en: 'Voice (work sessions)' },
   voiceSectionHint: { zh: '只改变说话方式：内容、工具与执行方式完全不变，不注入任何角色身份。', en: 'Tone only: the substance, tools and execution stay exactly the same; no character identity is injected.' },
@@ -197,7 +198,7 @@ const STR: Record<string, { zh: string; en: string }> = {
   roleplayStatusInstalled: { zh: '预设已安装', en: 'Preset installed' },
   roleplayStatusMissing: { zh: '预设未安装', en: 'Preset not installed' },
   roleplayStatusOff: { zh: '角色空间已关闭（未安装预设）', en: 'Roleplay is off (no preset installed)' },
-  roleplayStatusMasterOff: { zh: '「启用魈主题」总开关已关闭：角色空间不生效，预设已移除。', en: 'The "Enable Xiao theme" master switch is off: roleplay is inactive and its preset has been removed.' },
+  roleplayStatusMasterOff: { zh: '主题总开关已关闭：角色空间不生效，预设已移除。', en: 'The theme master switch is off: roleplay is inactive and its preset has been removed.' },
   roleplayStatusUnknown: { zh: '读取预设状态失败', en: 'Failed to read preset status' },
   roleplayHint: { zh: '默认关闭：打开上面的开关才会安装预设。角色会话是一个独立会话：开一个新会话，在顶部选择「角色空间（娱乐）」预设即可进入角色。它使用上面的完整角色设定作为系统提示词，且不挂载任何文件/命令工具，因此不会影响也不需要牺牲工作会话的能力；两边的历史互不相通。', en: 'Off by default: turn the switch above on to install the preset. A roleplay session is a separate session: start a new session and pick the "Roleplay" preset at the top to enter character. It uses the full character prompt above as its system prompt and mounts no file or command tools, so a work session\'s capability is neither affected nor traded away; the two keep separate histories.' },
   roleplayHintWork: { zh: '工作会话只保留上方的「语气」注入，永不注入角色身份。', en: 'Work sessions keep only the tone injection above and never receive a character identity.' },
@@ -579,8 +580,9 @@ async function listThemes(): Promise<ThemeListResponse> {
 }
 
 /**
- * 当前活动主题名（设置页左侧分区标题用）。
- * 主题切换 / 重命名 / 删除后由设置页的 refresh 写入，订阅者据此重注册 settings.section 更新标题。
+ * 当前活动主题名（设置页左侧分区标题 + 设置页内标题用）。
+ * 主题切换 / 重命名 / 删除后由设置页的 refresh 写入，订阅者据此重注册 settings.section 更新标题
+ * （设置页内的标题则直接订阅 activeThemeNameListeners 重渲染）。
  * 主题名以用户实际命名为准，**不做翻译**；只有「主题」/「 Theme」后缀随界面语言变化。
  */
 let activeThemeName = '';
@@ -596,6 +598,11 @@ function setActiveThemeName(next: string): void {
       console.error('[xiao-theme] active theme name listener failed:', error);
     }
   }
+}
+
+/** 当前活动主题名（尚未取到时为 `''`）。设置页内标题与左侧分区标题共用。 */
+function getActiveThemeName(): string {
+  return activeThemeName;
 }
 
 /** 从 Host 拉取当前活动主题名（失败保持原值）；插件启动时调用一次，补上设置页打开前的标题。 */
@@ -625,6 +632,17 @@ function composeThemeTitle(name: string, lang: 'zh' | 'en' | ''): string {
   const suffix =
     lang === 'zh' ? STR.themeTitleSuffix!.zh : lang === 'en' ? STR.themeTitleSuffix!.en : t('themeTitleSuffix');
   return trimmed + suffix;
+}
+
+/**
+ * 「总开关」勾选框的文案：`启用前缀 + 设置页标题`（即 `{前缀}{主题名}主题` / `{prefix}{name} Theme`）。
+ * 默认主题 / 尚未取到主题名时与历史文案逐字一致：「启用魈主题」/「Enable Xiao Theme」。
+ * `lang` 传 `''` 时前缀与标题都走 `t()`，即按当前 `<html lang>` 判语言。
+ */
+function composeEnableThemeLabel(name: string, lang: 'zh' | 'en' | ''): string {
+  const prefix =
+    lang === 'zh' ? STR.enableThemePrefix!.zh : lang === 'en' ? STR.enableThemePrefix!.en : t('enableThemePrefix');
+  return prefix + composeThemeTitle(name, lang);
 }
 
 async function createTheme(name: string): Promise<ThemeSummary> {
@@ -2587,7 +2605,7 @@ function UploadPicker({
  * 与上方「语气」分组彻底分开：这里产出的是一个独立 agent preset，永不进工作会话。
  */
 function RoleplayGroup({ cfg, store }: { cfg: XiaoConfig; store: ConfigStore }): React.ReactElement {
-  // masterOn = 「启用魈主题」总开关；featureOn = 角色空间自己的开关（用户的选择，不受总开关影响）；
+  // masterOn = 主题总开关（「启用{主题名}主题」）；featureOn = 角色空间自己的开关（用户的选择，不受总开关影响）；
   // active = 两者同时开才真正生效（Host 端同判断，总开关关闭时会移除预设）。
   const masterOn = cfg.enabled !== false;
   const featureOn = cfg.roleplayEnabled === true;
@@ -2857,6 +2875,16 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
   const [saveErr, setSaveErr] = React.useState<string | null>(() => saveError.get());
   React.useEffect(() => saveError.subscribe(() => setSaveErr(saveError.get())), []);
+  // 设置页**内**标题也与左侧分区标题同源：跟随当前主题名（订阅 activeThemeNameListeners 重渲染）。
+  const [themeName, setThemeName] = React.useState<string>(() => getActiveThemeName());
+  React.useEffect(() => {
+    const onThemeNameChange = (): void => setThemeName(getActiveThemeName());
+    activeThemeNameListeners.add(onThemeNameChange);
+    onThemeNameChange();
+    return () => {
+      activeThemeNameListeners.delete(onThemeNameChange);
+    };
+  }, []);
   const [pickerKind, setPickerKind] = React.useState<'bg' | 'avatar' | null>(null);
   const cfg = snapshot;
   const enabled = cfg.enabled !== false;
@@ -2887,11 +2915,14 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
     React.createElement(
       'div',
       { className: 'xiao-settings-section' },
-      React.createElement('div', { className: 'xiao-settings-title' }, t('themeTitle')),
+      // 标题与左侧分区标题同源：{主题名} + 语言后缀（内置默认主题 / 尚未取到名字时回落「魈主题 / Xiao Theme」）。
+      // 第二参传 '' 让它走 t()，即按当前 <html lang> 判语言，与页面内其它文案完全一致。
+      React.createElement('div', { className: 'xiao-settings-title' }, composeThemeTitle(themeName, '')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
-        React.createElement('label', { className: 'xiao-settings-label' }, t('enableTheme')),
+        // 总开关文案也跟随主题名：`启用{主题名}主题`（默认主题即历史文案「启用魈主题」）。
+        React.createElement('label', { className: 'xiao-settings-label' }, composeEnableThemeLabel(themeName, '')),
         React.createElement('input', {
           type: 'checkbox',
           checked: enabled,
@@ -3539,5 +3570,6 @@ export {
   buildPalette,
   mascotText,
   composeThemeTitle,
+  composeEnableThemeLabel,
 };
 export default { inject, apply } satisfies ClientPlugin;
