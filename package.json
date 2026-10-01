@@ -1,6 +1,6 @@
 {
   "name": "xiao-ui-theme-ts",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "license": "MIT",
   "type": "module",
   "author": "jinxlux",
@@ -46,14 +46,19 @@
     "dsh": {
       "recommended": ">=0.1.5-alpha.1",
       "recommendedNote": "Use this release (0.12.0) or a later one.",
-      "verified": ["0.1.5-rc.3", "0.1.7-rc.2"],
+      "verified": [
+        "0.1.5-rc.3",
+        "0.1.7-rc.2"
+      ],
       "useOlderTheme": "<0.1.5-alpha.1",
       "useOlderThemeNote": "Use the previous theme release 0.11.x.",
       "mismatchNote": "Picking against this table does not crash (the plugin still loads and DSH still starts), but UI bugs may appear - for example the sidebar / right panel background or transparency can be wrong.",
       "auditedNote": "Every published @deepseek-ai/dsh-client-ui-sidebar-right build (v0.1.5-alpha.1 ... 0.1.7-rc.2) was unpacked and checked: 0.1.5-alpha.1 - 0.1.6-alpha.2 paint their own panel and have no data-sidebar-right-session marker; 0.1.7-alpha.1 and newer do not paint it and do carry the marker."
     },
     "betterSidebar": {
-      "verified": ["0.19.1"],
+      "verified": [
+        "0.19.1"
+      ],
       "supported": ">=0.19",
       "note": "Recorded for reference only - it takes no part in the version choice above. Legacy <=0.18 (self-drawn right panel) is not adapted to any more; the legacy anchors stay in the CSS so nothing crashes, but the look is not guaranteed."
     }
