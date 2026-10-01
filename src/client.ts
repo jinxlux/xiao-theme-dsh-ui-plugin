@@ -24,6 +24,8 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   backgroundImagePath: 'resource/avatar.png',
   backgroundDynamic: false,
   backgroundVideoAudio: false,
+  // 视频背景音量（0–1）：默认 1 = 满音量（打开声音开关即原音量，与旧版一致）。
+  backgroundVideoVolume: 1,
   // 多背景：默认空列表 = 由 backgroundImagePath/backgroundDynamic 合成的单张（与旧版完全一致）。
   backgroundList: [],
   backgroundInterval: 30,
@@ -39,12 +41,16 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   roleplayNetwork: false,
 };
 const CLIENT_RANGES = {
+  backgroundVideoVolume: { min: 0, max: 1 },
   backgroundBlur: { min: 0, max: 60 },
   backgroundInterval: { min: 2, max: 600 },
   panelOpacity: { min: 0.3, max: 0.9 },
   sidebarOpacity: { min: 0, max: 1 },
 } as const;
 const PANEL_OPACITY_MAX = 0.9;
+
+/** 内置默认主题名（与 Host 的 DEFAULT_THEME_NAME 一致）：默认主题沿用双语静态标题「魈主题 / Xiao Theme」。 */
+const DEFAULT_THEME_NAME = '魈';
 
 let bgVersion = 0;
 let avatarVersion = 0;
@@ -82,6 +88,8 @@ function mascotText(value: string | undefined, field: 'title' | 'subtitle'): str
 /** 设置页 / 主题管理 / 徽章提示的文案字典（跟随 DSH 界面语言）。 */
 const STR: Record<string, { zh: string; en: string }> = {
   themeTitle: { zh: '魈主题', en: 'Xiao Theme' },
+  // 设置页左侧分区标题的后缀：主题名原样 + 语言后缀（英文保留前导空格，与 'Xiao Theme' 风格一致）。
+  themeTitleSuffix: { zh: '主题', en: ' Theme' },
   enableTheme: { zh: '启用魈主题', en: 'Enable Xiao theme' },
   themeColor: { zh: '主题颜色', en: 'Theme color' },
   voiceSection: { zh: '语气（工作会话）', en: 'Voice (work sessions)' },
@@ -121,6 +129,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
   useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
   videoAudio: { zh: '视频背景声音', en: 'Background video audio' },
+  videoVolume: { zh: '视频背景音量', en: 'Background video volume' },
+  videoVolumeHint: { zh: '0% 完全无声；拖动滑杆会自动取消静音。吉祥物徽章里也有同一根音量滑杆，两边随时同步。声音还需要页面加载后先交互一次才会响（浏览器自动播放策略）。', en: '0% is silent; moving the slider unmutes automatically. The mascot badge carries the same volume slider and stays in sync. Sound also needs one interaction after page load (browser autoplay policy).' },
   soundUnmute: { zh: '开启视频背景声音', en: 'Turn on background video sound' },
   soundMute: { zh: '关闭视频背景声音（静音）', en: 'Mute background video' },
   // —— 多背景轮播 ——
@@ -138,7 +148,7 @@ const STR: Record<string, { zh: string; en: string }> = {
   bgInterval: { zh: '切换间隔', en: 'Switch interval' },
   bgAddDuplicate: { zh: '该文件已在列表中', en: 'Already in the list' },
   bgListHint: { zh: '列表 ≥ 2 项时按上方「切换间隔」轮播：静态图与 GIF 到点即切；视频在「间隔 ≤ 时长」时播完才切、「间隔 > 时长」时循环播到点再切。切换用固定约 0.7 秒的交叉渐变。只有 1 项时与旧版单背景完全一致。', en: 'With 2+ items the list rotates at the "Switch interval" above: static images and GIFs switch on the timer; a video is always played to the end when the interval is shorter than it, and loops until the timer when the interval is longer. Switching uses a fixed ~0.7s cross-fade. With a single item, behaviour is exactly the old single background.' },
-  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片/视频（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图或 MP4/WebM 视频会自动识别为动态背景（视频背景可在下方选择是否播放声音）；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。背景支持多张轮播：在上方列表里添加第 2 张起即进入轮播，切换间隔可调。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image or video (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF or MP4/WebM video is auto-detected as a dynamic background (video backgrounds can optionally play sound below); static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading. Multiple backgrounds rotate: add a second item in the list above to start rotating, with an adjustable interval.' },
+  settingsHint: { zh: '改动即时生效。背景图/头像路径支持相对插件目录（如 resource/avatar.png）或本地绝对路径，也可直接上传图片/视频（保存到 ~/.dsh/xiao-theme-uploads/）。上传 GIF 动图或 MP4/WebM 视频会自动识别为动态背景（视频背景可在下方选择是否播放声音，并用音量滑杆调大小）；静态图片或单帧 GIF 仍按原静态磨砂背景处理。头像同样可通过上传替换。背景支持多张轮播：在上方列表里添加第 2 张起即进入轮播，切换间隔可调。', en: 'Changes take effect immediately. The background/avatar path supports a plugin-relative path (e.g. resource/avatar.png) or a local absolute path; you can also upload an image or video (saved to ~/.dsh/xiao-theme-uploads/). An uploaded animated GIF or MP4/WebM video is auto-detected as a dynamic background (video backgrounds can optionally play sound below, with a volume slider); static images or single-frame GIFs keep the static frosted treatment. The avatar can also be replaced by uploading. Multiple backgrounds rotate: add a second item in the list above to start rotating, with an adjustable interval.' },
   themeManager: { zh: '主题管理', en: 'Theme management' },
   themeManagerHint: { zh: '所有设置修改都会自动保存为当前主题修改。如果想创建新主题，请用「另存为新主题」创建，再在新主题下修改，才不会覆盖现在这个主题的设置。', en: 'All setting changes are automatically saved to the current theme. To create a new theme, use "Save as new theme" first, then edit under that new theme so you don\'t overwrite the current theme\'s settings.' },
   currentTheme: { zh: '当前主题', en: 'Current theme' },
@@ -567,6 +577,56 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 async function listThemes(): Promise<ThemeListResponse> {
   return fetchJson<ThemeListResponse>('/xiao-theme/themes', { cache: 'no-store' });
 }
+
+/**
+ * 当前活动主题名（设置页左侧分区标题用）。
+ * 主题切换 / 重命名 / 删除后由设置页的 refresh 写入，订阅者据此重注册 settings.section 更新标题。
+ * 主题名以用户实际命名为准，**不做翻译**；只有「主题」/「 Theme」后缀随界面语言变化。
+ */
+let activeThemeName = '';
+const activeThemeNameListeners = new Set<() => void>();
+
+function setActiveThemeName(next: string): void {
+  if (next === activeThemeName) return;
+  activeThemeName = next;
+  for (const listener of [...activeThemeNameListeners]) {
+    try {
+      listener();
+    } catch (error) {
+      console.error('[xiao-theme] active theme name listener failed:', error);
+    }
+  }
+}
+
+/** 从 Host 拉取当前活动主题名（失败保持原值）；插件启动时调用一次，补上设置页打开前的标题。 */
+async function refreshActiveThemeName(): Promise<void> {
+  try {
+    const res = await listThemes();
+    const active = res.themes.find((item) => item.id === res.activeThemeId);
+    setActiveThemeName(active ? active.name : '');
+  } catch (error) {
+    console.error('[xiao-theme] load active theme name failed:', error);
+  }
+}
+
+/**
+ * 设置页左侧分区标题：{主题名} + 语言后缀。主题名原样使用（用户给「爱情」，英文界面也是「爱情」），
+ * 后缀随界面语言：中文「主题」、英文「 Theme」。尚未取到主题名、或仍是内置默认主题「魈」时，
+ * 沿用双语静态标题（「魈主题」/「Xiao Theme」），避免默认主题在英文界面被拼成「魈 Theme」。
+ */
+function composeThemeTitle(name: string, lang: 'zh' | 'en' | ''): string {
+  const trimmed = typeof name === 'string' ? name.trim() : '';
+  // 尚未取到主题名，或仍是内置默认主题「魈」：沿用双语静态标题，而不是「魈 Theme」。
+  if (trimmed.length === 0 || trimmed === DEFAULT_THEME_NAME) {
+    if (lang === 'zh') return STR.themeTitle!.zh;
+    if (lang === 'en') return STR.themeTitle!.en;
+    return t('themeTitle');
+  }
+  const suffix =
+    lang === 'zh' ? STR.themeTitleSuffix!.zh : lang === 'en' ? STR.themeTitleSuffix!.en : t('themeTitleSuffix');
+  return trimmed + suffix;
+}
+
 async function createTheme(name: string): Promise<ThemeSummary> {
   return fetchJson<ThemeSummary>('/xiao-theme/themes', {
     method: 'POST',
@@ -780,6 +840,16 @@ function armBgVideoGesture(video: HTMLVideoElement, action: () => void): void {
   bgVideoGestureCleanup.set(video, cleanup);
 }
 
+/** 取合法音量（0–1；缺失 / 非法回默认值 1）。导出供单测直接验证。 */
+export function bgVolume(cfg: XiaoConfig): number {
+  return clampNum(
+    cfg.backgroundVideoVolume,
+    CLIENT_RANGES.backgroundVideoVolume.min,
+    CLIENT_RANGES.backgroundVideoVolume.max,
+    CLIENT_DEFAULT_CONFIG.backgroundVideoVolume,
+  );
+}
+
 /**
  * 让一个背景 <video> 播起来，并统一处理浏览器自动播放策略（单张快路径与轮播共用）。
  * - 目标静音：直接 play()。已在播放时再调 play() 是空操作，故可在每次配置同步时安全重调。
@@ -790,10 +860,14 @@ function armBgVideoGesture(video: HTMLVideoElement, action: () => void): void {
  * ⚠️ 绝不可以在没有用户激活时把 muted 置为 false：Chromium 的自动播放策略不允许无激活的
  * 有声播放，会把已经在播的静音元素直接停住；而轮播在列表/间隔未变时不会重建 <video>，
  * 于是画面永远停住，直到用户手动切主题（既有激活、列表又变了才重新创建并播放）。
+ * - volume：目标音量（0–1），写入 <video>.volume；为 0 时按静音处理，不请求有声自动播放。
  */
-function playBgVideo(video: HTMLVideoElement, wantMuted: boolean): void {
+function playBgVideo(video: HTMLVideoElement, wantMuted: boolean, volume: number): void {
   clearBgVideoGesture(video);
-  const audible = !wantMuted;
+  const vol = clamp01(volume);
+  video.volume = vol;
+  // 音量 0 等同静音：不为「有声音」去请求有声自动播放（必被浏览器拒绝，还白登记一次手势）。
+  const audible = !wantMuted && vol > 0;
   const canBeAudible = audible && hasUserActivation();
   video.muted = !canBeAudible;
   const start = (): void => {
@@ -863,7 +937,7 @@ function syncBgVideo(cfg: XiaoConfig, active: boolean): void {
   }
   // 自动播放策略统一交给 playBgVideo：目标有声但尚无用户激活时，它会先静音播并登记
   // 「首次交互后恢复声音」，而不是直接写 muted=false（那会把已播放的元素停住）。
-  playBgVideo(v, cfg.backgroundVideoAudio !== true);
+  playBgVideo(v, cfg.backgroundVideoAudio !== true, bgVolume(cfg));
 }
 
 /**
@@ -1103,10 +1177,37 @@ function ensureRotationLayers(): [HTMLElement, HTMLElement] {
 function applyRotationAudio(cfg: XiaoConfig): void {
   if (rotation.layers === null) return;
   const wantMuted = cfg.backgroundVideoAudio !== true;
+  const volume = bgVolume(cfg);
   for (const el of rotation.layers) {
     const video = el.querySelector('video');
-    if (video instanceof HTMLVideoElement) playBgVideo(video, wantMuted);
+    if (video instanceof HTMLVideoElement) playBgVideo(video, wantMuted, volume);
   }
+}
+
+/** 对当前所有在放的背景 <video>（单张快路径 + 轮播两层）各执行一次操作。 */
+function forEachBgVideo(fn: (video: HTMLVideoElement) => void): void {
+  const single = document.getElementById('xiao-theme-video');
+  if (single instanceof HTMLVideoElement) fn(single);
+  if (rotation.layers !== null) {
+    for (const el of rotation.layers) {
+      const video = el.querySelector('video');
+      if (video instanceof HTMLVideoElement) fn(video);
+    }
+  }
+}
+
+/**
+ * 音量滑杆拖动中的即时预览：直接写 <video>.volume，不等配置写回，拖到哪儿听到哪儿。
+ * 只在用户拖滑杆时调用（此时必有用户激活），故可按音量顺带解除静音；音量归零则置 muted。
+ * 正式提交仍走 saveConfig（见设置页 / 徽章），本函数不碰配置。
+ */
+function previewBgVolume(volume: number): void {
+  const vol = clamp01(volume);
+  forEachBgVideo((video) => {
+    video.volume = vol;
+    if (vol <= 0) video.muted = true;
+    else if (video.muted && hasUserActivation()) video.muted = false;
+  });
 }
 
 /** 停止轮播并移除全部图层（离开轮播模式 / 卸载 / 总开关关闭时调用）。 */
@@ -1182,7 +1283,7 @@ function prepareLayer(
     video.addEventListener('error', () => done(null));
     // 自动播放策略统一交给 playBgVideo：无用户激活时先静音播（轮播照常推进），
     // 有声被拦时降级静音，并在首次交互后恢复声音。绝不在这里直接写 muted=false。
-    playBgVideo(video, cfg.backgroundVideoAudio !== true);
+    playBgVideo(video, cfg.backgroundVideoAudio !== true, bgVolume(cfg));
     return;
   }
   const probe = new Image();
@@ -1498,6 +1599,54 @@ interface BadgeSound {
   audible: boolean;
   label: string;
   onToggle: () => void;
+  /** 当前音量（0–1）：音量滑杆的显示值，与设置页同一个字段。 */
+  volume: number;
+  /** 拖动中的即时预览：只改 <video>.volume，不写配置。 */
+  onVolumePreview: (v: number) => void;
+  /** 提交音量：写配置；>0 时顺带取消静音（拖到有声位置就该听得到）。 */
+  onVolumeCommit: (v: number) => void;
+}
+
+/**
+ * 吉祥物徽章里的音量滑杆（只有视频背景时由调用方渲染）。
+ * 拖动时本地预览 + 直接写 <video>.volume（拖到哪儿听到哪儿），松开 / 失焦 / 回车才提交配置，
+ * 与设置页 RangeRow 同一套提交语义，避免每动一格就发一次请求。
+ */
+function BadgeVolume({
+  volume,
+  label,
+  onPreview,
+  onCommit,
+}: {
+  volume: number;
+  label: string;
+  onPreview: (v: number) => void;
+  onCommit: (v: number) => void;
+}): React.ReactElement {
+  const [val, setVal] = React.useState<number>(volume);
+  React.useEffect(() => setVal(volume), [volume]);
+  const stop = (e: React.SyntheticEvent): void => e.stopPropagation();
+  return React.createElement('input', {
+    className: 'xiao-volume',
+    type: 'range',
+    min: 0,
+    max: 1,
+    step: 0.01,
+    value: val,
+    'aria-label': label,
+    title: label + ' ' + Math.round(val * 100) + '%',
+    // 徽章整体可拖拽：滑杆必须吃掉 pointer 事件，否则一按就开始拖徽章。
+    onPointerDown: stop,
+    onClick: stop,
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      const v = Number(e.target.value);
+      setVal(v);
+      onPreview(v);
+    },
+    onPointerUp: () => onCommit(val),
+    onKeyUp: () => onCommit(val),
+    onBlur: () => onCommit(val),
+  });
 }
 
 function XiaoBadge({
@@ -1668,6 +1817,14 @@ function XiaoBadge({
         React.createElement('div', { className: 'xiao-sub' }, subtitle),
       ),
       sound
+        ? React.createElement(BadgeVolume, {
+            volume: sound.volume,
+            label: t('videoVolume'),
+            onPreview: sound.onVolumePreview,
+            onCommit: sound.onVolumeCommit,
+          })
+        : null,
+      sound
         ? React.createElement(
             'button',
             {
@@ -1704,14 +1861,15 @@ function XiaoBadge({
 
 /**
  * 悬浮窗组件：订阅配置，enabled=false 时隐藏。
- * 背景是视频时，把喇叭按钮**放进吉祥物徽章里**（不额外占屏幕位置）；静态图 / GIF 传 null。
- * 按钮写的是设置页同一个字段 backgroundVideoAudio，两边永远同步。
+ * 背景是视频时，把喇叭按钮与音量滑杆**放进吉祥物徽章里**（不额外占屏幕位置）；静态图 / GIF 传 null。
+ * 两者写的都是设置页同一组字段（backgroundVideoAudio / backgroundVideoVolume），两边永远同步。
  */
 function XiaoOverlay({ store }: { store: ConfigStore }): React.ReactElement | null {
   const [snapshot, setSnapshot] = React.useState<XiaoConfig>(() => store.getSnapshot());
   React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [store]);
   if (snapshot.enabled === false) return null;
   const audible = snapshot.backgroundVideoAudio === true;
+  const volume = bgVolume(snapshot);
   return React.createElement(XiaoBadge, {
     avatarPath: snapshot.avatarPath || CLIENT_DEFAULT_CONFIG.avatarPath,
     title: mascotText(snapshot.mascotTitle, 'title'),
@@ -1721,6 +1879,14 @@ function XiaoOverlay({ store }: { store: ConfigStore }): React.ReactElement | nu
           audible,
           label: t(audible ? 'soundMute' : 'soundUnmute'),
           onToggle: () => void saveConfig(store, { backgroundVideoAudio: !audible }),
+          volume,
+          onVolumePreview: previewBgVolume,
+          onVolumeCommit: (v: number) => {
+            const patch: Partial<XiaoConfig> = { backgroundVideoVolume: v };
+            // 拖到有声位置却还静音着，等于「拖了没反应」：同一次保存里顺手取消静音。
+            if (v > 0 && !audible) patch.backgroundVideoAudio = true;
+            void saveConfig(store, patch);
+          },
         }
       : null,
   });
@@ -1734,6 +1900,7 @@ function RangeRow({
   max,
   step,
   format,
+  onPreview,
   onCommit,
 }: {
   label: string;
@@ -1742,6 +1909,8 @@ function RangeRow({
   max: number;
   step: number;
   format?: (v: number) => string;
+  /** 可选：拖动中的即时预览（如视频音量直接写入 <video>），不写配置。 */
+  onPreview?: (v: number) => void;
   onCommit: (v: number) => void;
 }): React.ReactElement {
   const [val, setVal] = React.useState<number>(value);
@@ -1758,7 +1927,11 @@ function RangeRow({
       max,
       step,
       value: val,
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) => setVal(Number(e.target.value)),
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+        const next = Number(e.target.value);
+        setVal(next);
+        if (onPreview) onPreview(next);
+      },
       onPointerUp: commit,
       onKeyUp: commit,
       onBlur: commit,
@@ -1785,6 +1958,9 @@ function ThemeManager({ store }: { store: ConfigStore }): React.ReactElement {
       const res = await listThemes();
       setThemes(res.themes);
       setActiveId(res.activeThemeId);
+      // 同步给设置页左侧分区标题：主题切换 / 重命名 / 删除后标题立刻变成新主题名。
+      const active = res.themes.find((item) => item.id === res.activeThemeId);
+      setActiveThemeName(active ? active.name : '');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -2964,6 +3140,24 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
             },
           }),
         ),
+      // 视频背景音量：仅视频背景显示；与徽章里的音量滑杆写同一个字段。
+      isVideoBg &&
+        React.createElement(RangeRow, {
+          label: t('videoVolume'),
+          value: bgVolume(cfg),
+          min: CLIENT_RANGES.backgroundVideoVolume.min,
+          max: CLIENT_RANGES.backgroundVideoVolume.max,
+          step: 0.01,
+          format: (v: number) => Math.round(v * 100) + '%',
+          onPreview: previewBgVolume,
+          onCommit: (v: number) => {
+            const patch: Partial<XiaoConfig> = { backgroundVideoVolume: v };
+            if (v > 0 && cfg.backgroundVideoAudio !== true) patch.backgroundVideoAudio = true;
+            void saveConfig(store, patch);
+          },
+        }),
+      isVideoBg &&
+        React.createElement('div', { className: 'xiao-settings-hint' }, t('videoVolumeHint')),
       React.createElement(RangeRow, {
         label: t('blurStrength'),
         value: clampNum(cfg.backgroundBlur, CLIENT_RANGES.backgroundBlur.min, CLIENT_RANGES.backgroundBlur.max, 22),
@@ -3111,6 +3305,8 @@ const XIAO_CSS: string[] = [
 '.xiao-sound{font-size:15px;}',
 '.xiao-sound[aria-pressed="true"]{color:var(--dsw-alias-brand-primary);}',
 '.xiao-sound-off{opacity:0.55;}',
+// 徽章内的音量滑杆：与喇叭按钮并排，只在有视频背景时出现（静态图 / GIF 不占位）。
+'.xiao-volume{width:74px;flex:none;accent-color:var(--dsw-alias-brand-primary);cursor:pointer;touch-action:auto;}',
   '.xiao-wind{font-size:14px;letter-spacing:6px;opacity:0.9;animation:xiao-float 3s ease-in-out infinite alternate;}',
   '@keyframes xiao-float{from{transform:translateY(0);}to{transform:translateY(-5px);}}',
   '.xiao-settings{display:flex;flex-direction:column;gap:6px;padding:4px 0;max-width:640px;}',
@@ -3285,15 +3481,14 @@ function apply(ctx: ClientCtx): void {
       React.createElement(XiaoOverlay, { store }),
     ),
   );
-  // settings.section 标题需跟随 DSH 界面语言：用 slots.inject 声明该 slot（必须，否则 DSH 会报“slot 未声明”崩溃），
-  // 并在语言变化（<html lang> 更新）时 dispose 旧 inject + 重 inject 以更新 label。
+  // settings.section 标题需跟随 DSH 界面语言与当前主题名：用 slots.inject 声明该 slot（必须，否则 DSH 会报“slot 未声明”崩溃），
+  // 并在语言变化（<html lang> 更新）或活动主题名变化时 dispose 旧 inject + 重 inject 以更新 label。
   const localeSvc = ctx.get('locale');
   let settingsInject: (() => void) | null = null;
   const sectionLabel = (): string => {
     const active = localeSvc ? localeSvc.getLocale().active : '';
-    if (active === 'zh') return STR.themeTitle!.zh;
-    if (active === 'en') return STR.themeTitle!.en;
-    return t('themeTitle');
+    const lang: 'zh' | 'en' | '' = active === 'zh' ? 'zh' : active === 'en' ? 'en' : '';
+    return composeThemeTitle(activeThemeName, lang);
   };
   const registerSettings = (): void => {
     try {
@@ -3314,13 +3509,19 @@ function apply(ctx: ClientCtx): void {
   // 语言变化（DSH 更新 <html lang>）时重注册；覆盖初始时序（lang 尚未设置）与后续切换。
   const langObserver = new MutationObserver(() => registerSettings());
   langObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+  // 分区标题还要跟随「当前主题名」：主题切换 / 重命名后重注册，标题即变成「<主题名>主题 / <name> Theme」。
+  const onActiveThemeNameChange = (): void => registerSettings();
+  activeThemeNameListeners.add(onActiveThemeNameChange);
   registerSettings();
+  // 先按内置静态标题渲染（避免空白），随后取到活动主题名再刷新一次。
+  void refreshActiveThemeName();
   ctx.effect(
     () => () => {
       langObserver.disconnect();
+      activeThemeNameListeners.delete(onActiveThemeNameChange);
       if (settingsInject !== null) settingsInject();
     },
-    'xiao-theme: settings section locale sync',
+    'xiao-theme: settings section title sync',
   );
 }
 
@@ -3337,5 +3538,6 @@ export {
   deriveSurfaces,
   buildPalette,
   mascotText,
+  composeThemeTitle,
 };
 export default { inject, apply } satisfies ClientPlugin;

@@ -86,12 +86,24 @@ test('normalizeConfig: \u9ed8\u8ba4\u503c\u4e0e\u8303\u56f4\u94b3\u5236', () => 
   assert.equal(d.themeColor, '#2E8B72');
   assert.equal(d.roleplayEnabled, false);
   assert.equal(d.roleplayNetwork, false);
+  assert.equal(d.backgroundVideoAudio, false);
+  assert.equal(d.backgroundVideoVolume, 1, '视频背景音量默认满音量（保持旧行为）');
 
   const c = normalizeConfig({ backgroundBlur: 999, panelOpacity: 5, sidebarOpacity: -3, themeColor: 'nope' });
   assert.equal(c.backgroundBlur, 60);
   assert.equal(c.panelOpacity, 0.9);
   assert.equal(c.sidebarOpacity, 0);
   assert.equal(c.themeColor, '#2E8B72');
+});
+
+test('normalizeConfig: 视频背景音量钳制到 0–1，非法值回默认', () => {
+  assert.equal(normalizeConfig({ backgroundVideoVolume: 0.35 }).backgroundVideoVolume, 0.35);
+  assert.equal(normalizeConfig({ backgroundVideoVolume: 0 }).backgroundVideoVolume, 0);
+  assert.equal(normalizeConfig({ backgroundVideoVolume: 5 }).backgroundVideoVolume, 1);
+  assert.equal(normalizeConfig({ backgroundVideoVolume: -2 }).backgroundVideoVolume, 0);
+  // 非法 / 缺失（含字符串）一律回默认 1，不会因为 NaN 让 <video>.volume 变成 0。
+  assert.equal(normalizeConfig({ backgroundVideoVolume: 'x' }).backgroundVideoVolume, 1);
+  assert.equal(normalizeConfig({ backgroundVideoVolume: Number.NaN }).backgroundVideoVolume, 1);
 });
 
 test('normalizeConfig: \u65e7\u5b57\u6bb5\u8fc1\u79fb\u4e0e\u4f18\u5148\u7ea7', () => {

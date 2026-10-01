@@ -87,6 +87,21 @@ test('mascotText: factory defaults follow the UI language', () => {
   assert.equal(mod.mascotText('custom', 'subtitle'), 'custom');
 });
 
+test('composeThemeTitle: 主题名原样 + 语言后缀（设置页左侧标题）', () => {
+  // 主题名按用户所给原样保留，不翻译；只有后缀随界面语言变化。
+  assert.equal(mod.composeThemeTitle('爱情', 'zh'), '爱情主题');
+  assert.equal(mod.composeThemeTitle('爱情', 'en'), '爱情 Theme');
+  assert.equal(mod.composeThemeTitle('Love', 'en'), 'Love Theme');
+  assert.equal(mod.composeThemeTitle('  爱情  ', 'zh'), '爱情主题');
+  // 尚未取到主题名（空 / 全空白）时回退到内置静态标题。
+  assert.equal(mod.composeThemeTitle('', 'zh'), '魈主题');
+  assert.equal(mod.composeThemeTitle('', 'en'), 'Xiao Theme');
+  assert.equal(mod.composeThemeTitle('   ', 'zh'), '魈主题');
+  // 内置默认主题「魈」沿用双语静态标题（英文不拼成「魈 Theme」）。
+  assert.equal(mod.composeThemeTitle('魈', 'zh'), '魈主题');
+  assert.equal(mod.composeThemeTitle('魈', 'en'), 'Xiao Theme');
+});
+
 test('buildPalette', () => {
   const p = mod.buildPalette('#2E8B72');
   const keys = Object.keys(p);
@@ -113,6 +128,17 @@ test('videoPlaythroughPlan: switch time = max(interval, duration)', () => {
     waitForEnded: false,
     switchAfterMs: 5000,
   });
+});
+
+test('bgVolume: 0–1 钳制，缺失 / 非法回默认 1', () => {
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: 0.4 }), 0.4);
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: 0 }), 0);
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: 1 }), 1);
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: 9 }), 1);
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: -1 }), 0);
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: Number.NaN }), 1);
+  assert.equal(mod.bgVolume({}), 1);
+  assert.equal(mod.bgVolume({ backgroundVideoVolume: '0.2' }), 1);
 });
 
 test('backgroundHasVideo: 只有视频背景才显示喇叭按钮', () => {

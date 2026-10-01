@@ -43,6 +43,12 @@ export interface XiaoConfig {
   /** 视频背景是否播放声音（仅当背景为视频时生效；默认静音，因浏览器要求自动播放需 muted）。 */
   backgroundVideoAudio: boolean;
   /**
+   * 视频背景音量（0–1，仅当背景为视频时生效）：仅在 backgroundVideoAudio = true（未静音）时听得到。
+   * 0 = 完全无声，1 = 原始音量；默认 1，保持旧行为（打开声音开关即满音量）。
+   * 设置页的「视频背景音量」与吉祥物徽章里的音量滑杆写的是同一个字段，两边永远同步。
+   */
+  backgroundVideoVolume: number;
+  /**
    * 多背景轮播列表（按顺序循环播放）。
    * **向后兼容**：缺省 / 为空 / 非法时，由 backgroundImagePath + backgroundDynamic 合成一个只有
    * 一项的列表；此时渲染与旧版单背景完全一致（无定时器、无渐变）。仅当长度 ≥ 2 时才进入轮播。

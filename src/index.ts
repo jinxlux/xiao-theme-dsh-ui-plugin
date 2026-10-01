@@ -79,6 +79,8 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   backgroundImagePath: 'resource/avatar.png',
   backgroundDynamic: false,
   backgroundVideoAudio: false,
+  // 视频背景音量（0–1）：默认 1 = 满音量（打开声音开关即原音量，与旧版一致）。
+  backgroundVideoVolume: 1,
   // 多背景：默认空列表 = 由 backgroundImagePath/backgroundDynamic 合成的单张（与旧版完全一致）。
   backgroundList: [],
   // 轮播间隔（秒）：仅在列表长度 ≥ 2 时生效。
@@ -99,6 +101,7 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   roleplayNetwork: false,
 };
 const HOST_RANGES = {
+  backgroundVideoVolume: { min: 0, max: 1 },
   backgroundBlur: { min: 0, max: 60 },
   backgroundInterval: { min: 2, max: 600 },
   panelOpacity: { min: 0.3, max: 0.9 },
@@ -223,6 +226,12 @@ export function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
     backgroundImagePath: primary.path,
     backgroundDynamic: primary.dynamic,
     backgroundVideoAudio: parsed.backgroundVideoAudio === true,
+    backgroundVideoVolume: clamp(
+      parsed.backgroundVideoVolume,
+      HOST_RANGES.backgroundVideoVolume.min,
+      HOST_RANGES.backgroundVideoVolume.max,
+      HOST_DEFAULT_CONFIG.backgroundVideoVolume,
+    ),
     backgroundList,
     backgroundInterval: clamp(
       parsed.backgroundInterval,
@@ -1074,6 +1083,12 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
       typeof body.backgroundVideoAudio === 'boolean'
         ? body.backgroundVideoAudio
         : current.backgroundVideoAudio,
+    backgroundVideoVolume:
+      clampNum(
+        body.backgroundVideoVolume,
+        HOST_RANGES.backgroundVideoVolume.min,
+        HOST_RANGES.backgroundVideoVolume.max,
+      ) ?? current.backgroundVideoVolume,
     backgroundList: nextList,
     backgroundInterval:
       clampNum(body.backgroundInterval, HOST_RANGES.backgroundInterval.min, HOST_RANGES.backgroundInterval.max) ??
