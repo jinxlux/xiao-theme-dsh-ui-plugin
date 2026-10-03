@@ -1110,6 +1110,27 @@ interface RotationState {
 
 const rotation: RotationState = { signature: '', visible: 0, layers: null, timer: null, token: 0 };
 
+/**
+ * 最近一次 `syncBackground()` 收到的配置。
+ * 轮播的**延迟回调**（定时器 advance / canplay / ended）持有的是**启动当轮的旧闭包 cfg**：
+ * 用户在轮播中途静音（或改音量）时，`syncBackgroundRotation` 会因指纹（列表 + 间隔）未变而只做
+ * `applyRotationAudio` 软更新 —— 它只作用在**已存在**的 `<video>` 上；而下一项仍由旧 cfg 创建，
+ * 于是新 `<video>` 按旧配置「要声音」，且此时已有用户激活（点过按钮）→ 直接带声播放，
+ * 表现就是「静音后轮播到下一个视频又自己响了」（反向同理：开了声音却每个新项都静音）。
+ * 所以**延迟回调一律经 `liveBgConfig()` 取配置**，不要直接用闭包里的 cfg。
+ */
+let liveBgCfg: XiaoConfig | null = null;
+
+/** 记录最新配置（`syncBackground()` 每次同步都调）。导出供单测直接验证。 */
+export function setLiveBgConfig(cfg: XiaoConfig): void {
+  liveBgCfg = cfg;
+}
+
+/** 延迟回调取配置：优先最新一次同步进来的，尚未同步过才退回闭包里的旧值。导出供单测直接验证。 */
+export function liveBgConfig(fallback: XiaoConfig): XiaoConfig {
+  return liveBgCfg ?? fallback;
+}
+
 /** 取「有效多背景列表」：配置里的合法项；为空时由旧字段合成单张，保证长度恒 ≥ 1。 */
 function effectiveBackgroundList(cfg: XiaoConfig): BackgroundEntry[] {
   const raw = Array.isArray(cfg.backgroundList) ? cfg.backgroundList : [];
@@ -1301,7 +1322,10 @@ function prepareLayer(
     video.addEventListener('error', () => done(null));
     // 自动播放策略统一交给 playBgVideo：无用户激活时先静音播（轮播照常推进），
     // 有声被拦时降级静音，并在首次交互后恢复声音。绝不在这里直接写 muted=false。
-    playBgVideo(video, cfg.backgroundVideoAudio !== true, bgVolume(cfg));
+    // ⚠️ 声音状态取**最新**配置：这一项是轮播中途延迟创建的，闭包 cfg 可能是「静音之前」的
+    //    （否则静音后切到下一个视频又自己响了，见 liveBgCfg 的注释）。
+    const live = liveBgConfig(cfg);
+    playBgVideo(video, live.backgroundVideoAudio !== true, bgVolume(live));
     return;
   }
   const probe = new Image();
@@ -1339,7 +1363,8 @@ function scheduleRotation(
       window.clearTimeout(rotation.timer);
       rotation.timer = null;
     }
-    showRotationEntry(cfg, list, (index + 1) % list.length, token, false);
+    // 延迟回调里也重新取最新配置：`showRotationEntry` 会用它的声音 / 音量设置创建下一项。
+    showRotationEntry(liveBgConfig(cfg), list, (index + 1) % list.length, token, false);
   };
   if (isVideo) {
     const plan = videoPlaythroughPlan(intervalMs, durationMs);
@@ -1368,6 +1393,9 @@ function showRotationEntry(
   immediate: boolean,
 ): void {
   if (token !== rotation.token || rotation.layers === null) return;
+  // 进入这一项时立刻取最新配置：本条可能是轮播中途（用户已改过静音 / 音量）才轮到的，
+  // 用闭包 cfg 会把「静音」丢掉 —— 这正是「静音后又自己响」的根因。
+  cfg = liveBgConfig(cfg);
   const layers = rotation.layers;
   const entry = list[index]!;
   const incoming = layers[rotation.visible ^ 1]!;
@@ -1461,6 +1489,9 @@ function syncBackgroundRotation(cfg: XiaoConfig, list: BackgroundEntry[]): void 
  * 两者互斥；从轮播切回单张时先彻底移除图层，避免残留。
  */
 function syncBackground(cfg: XiaoConfig): void {
+  // 先记录最新配置：任何延迟回调（轮播定时器 / canplay / ended）都经 liveBgConfig() 读它，
+  // 否则轮播中途静音 / 改音量会被旧闭包 cfg 覆盖（见 liveBgCfg 的注释）。
+  setLiveBgConfig(cfg);
   const de = document.documentElement;
   const on = cfg.enabled !== false && cfg.backgroundEnabled !== false;
   const list = effectiveBackgroundList(cfg);

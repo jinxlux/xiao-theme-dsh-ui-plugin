@@ -119,6 +119,25 @@ test('composeEnableThemeLabel: 总开关文案跟随主题名（默认主题=历
   assert.equal(mod.composeEnableThemeLabel('', ''), 'Enable Xiao Theme');
 });
 
+test('liveBgConfig: 轮播延迟回调必须读到最新配置（静音不被旧闭包恢复）', () => {
+  // 轮播启动那一轮捕获的旧 cfg（当时有声音），以及用户后来静音后的最新 cfg。
+  const stale = { backgroundVideoAudio: true, backgroundVideoVolume: 1 };
+  const muted = { backgroundVideoAudio: false, backgroundVideoVolume: 0.5 };
+  // 尚未同步过任何配置：退回闭包里的值（行为与改动前一致）。
+  mod.setLiveBgConfig(null);
+  assert.equal(mod.liveBgConfig(stale), stale);
+  // 同步过一次之后（syncBackground 每次变更都会调 setLiveBgConfig）：
+  mod.setLiveBgConfig(muted);
+  const resolved = mod.liveBgConfig(stale);
+  assert.equal(resolved.backgroundVideoAudio, false);
+  assert.equal(resolved.backgroundVideoVolume, 0.5);
+  // 反向同理：先静音后开声音，延迟创建的新项也必须按最新配置「要声音」。
+  mod.setLiveBgConfig(stale);
+  assert.equal(mod.liveBgConfig(muted).backgroundVideoAudio, true);
+  // 还原成「未同步」状态，避免影响后续用例。
+  mod.setLiveBgConfig(null);
+});
+
 test('buildPalette', () => {
   const p = mod.buildPalette('#2E8B72');
   const keys = Object.keys(p);
