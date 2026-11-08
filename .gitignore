@@ -10,5 +10,11 @@ NextStepSuggest.md
 # 本地自动生成
 .pnpm-store/
 
+# 本地临时 / ACL 修复备份
+.tmp/
+.acl-recovery/
+# 一次性排障脚本（写死本机路径，不属于项目源码）
+scripts/fix-windows-workspace-label.ps1
+
 # release
 xiao-ui-theme-ts*

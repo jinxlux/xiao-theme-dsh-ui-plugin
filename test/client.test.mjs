@@ -200,3 +200,18 @@ test('backgroundHasVideo: 只有视频背景才显示喇叭按钮', () => {
   assert.equal(mod.backgroundHasVideo(cfg({ enabled: false, backgroundImagePath: 'a.mp4', backgroundDynamic: true })), false);
   assert.equal(mod.backgroundHasVideo(cfg({ backgroundEnabled: false, backgroundImagePath: 'a.mp4', backgroundDynamic: true })), false);
 });
+
+test('settingsOpacity: 0–1 钳制，缺失 / 非法回默认 0.4（与界面 / 侧栏不透明度无关）', () => {
+  assert.equal(mod.settingsOpacity({ settingsOpacity: 0.75 }), 0.75);
+  assert.equal(mod.settingsOpacity({ settingsOpacity: 0 }), 0);
+  assert.equal(mod.settingsOpacity({ settingsOpacity: 1 }), 1);
+  // 越界钳制（允许拉满 100%，不套用面板的 0.9 封顶）
+  assert.equal(mod.settingsOpacity({ settingsOpacity: -3 }), 0);
+  assert.equal(mod.settingsOpacity({ settingsOpacity: 9 }), 1);
+  // 缺失 / 非法 -> 默认 0.4
+  assert.equal(mod.settingsOpacity({}), 0.4);
+  assert.equal(mod.settingsOpacity({ settingsOpacity: Number.NaN }), 0.4);
+  assert.equal(mod.settingsOpacity({ settingsOpacity: '0.8' }), 0.4);
+  // 独立性：界面 / 侧栏不透明度取值不影响它
+  assert.equal(mod.settingsOpacity({ panelOpacity: 0.9, sidebarOpacity: 0 }), 0.4);
+});

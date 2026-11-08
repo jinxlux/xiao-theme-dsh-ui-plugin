@@ -88,6 +88,9 @@ const HOST_DEFAULT_CONFIG: XiaoConfig = {
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
+  // 设置页（DSH 设置对话框）独立不透明度：0.4 = 旧版在 panelOpacity 默认 0.5 下的实际观感，
+  // 升级后开箱不变；与界面 / 侧栏不透明度完全独立（见 client.ts 的 --xiao-settings-ovl 一族）。
+  settingsOpacity: 0.4,
   // 主题主色：默认魈的青玉绿。
   themeColor: '#2E8B72',
   mascotTitle: '靖妖傩舞',
@@ -106,6 +109,7 @@ const HOST_RANGES = {
   backgroundInterval: { min: 2, max: 600 },
   panelOpacity: { min: 0.3, max: 0.9 },
   sidebarOpacity: { min: 0, max: 1 },
+  settingsOpacity: { min: 0, max: 1 },
 } as const;
 /** hex 主色合法性校验：#rgb / #rrggbb。 */
 const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -266,6 +270,15 @@ export function normalizeConfig(parsed: Record<string, unknown>): XiaoConfig {
       HOST_RANGES.sidebarOpacity.min,
       HOST_RANGES.sidebarOpacity.max,
       HOST_DEFAULT_CONFIG.sidebarOpacity,
+    ),
+    // 设置页不透明度：旧配置 / 旧导出没有该字段 → 回落默认（0.4 = 旧版在默认界面不透明度下的观感）。
+    settingsOpacity: clamp(
+      typeof parsed.settingsOpacity === 'number'
+        ? parsed.settingsOpacity
+        : HOST_DEFAULT_CONFIG.settingsOpacity,
+      HOST_RANGES.settingsOpacity.min,
+      HOST_RANGES.settingsOpacity.max,
+      HOST_DEFAULT_CONFIG.settingsOpacity,
     ),
     themeColor:
       typeof parsed.themeColor === 'string' && HEX_COLOR_RE.test(parsed.themeColor.trim())
@@ -1102,6 +1115,9 @@ async function nextConfigFromBody(current: XiaoConfig, body: Record<string, unkn
     sidebarOpacity:
       clampNum(body.sidebarOpacity, HOST_RANGES.sidebarOpacity.min, HOST_RANGES.sidebarOpacity.max) ??
       current.sidebarOpacity,
+    settingsOpacity:
+      clampNum(body.settingsOpacity, HOST_RANGES.settingsOpacity.min, HOST_RANGES.settingsOpacity.max) ??
+      current.settingsOpacity,
     themeColor:
       typeof body.themeColor === 'string' && HEX_COLOR_RE.test(body.themeColor.trim())
         ? body.themeColor.trim()

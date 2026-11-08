@@ -32,6 +32,8 @@ const CLIENT_DEFAULT_CONFIG: XiaoConfig = {
   backgroundBlur: 22,
   panelOpacity: 0.5,
   sidebarOpacity: 0.85,
+  // 设置页（DSH 设置对话框）独立不透明度：0.4 = 旧版在 panelOpacity 默认 0.5 下的实际观感。
+  settingsOpacity: 0.4,
   themeColor: '#2E8B72',
   mascotTitle: '靖妖傩舞',
   mascotSubtitle: '别挡路',
@@ -46,6 +48,7 @@ const CLIENT_RANGES = {
   backgroundInterval: { min: 2, max: 600 },
   panelOpacity: { min: 0.3, max: 0.9 },
   sidebarOpacity: { min: 0, max: 1 },
+  settingsOpacity: { min: 0, max: 1 },
 } as const;
 const PANEL_OPACITY_MAX = 0.9;
 
@@ -127,6 +130,8 @@ const STR: Record<string, { zh: string; en: string }> = {
   blurStrength: { zh: '磨砂强度', en: 'Blur strength' },
   uiOpacity: { zh: '界面不透明度', en: 'UI opacity' },
   sidebarOpacity: { zh: '侧栏不透明度', en: 'Sidebar opacity' },
+  settingsOpacity: { zh: '设置页不透明度', en: 'Settings page opacity' },
+  settingsOpacityHint: { zh: '只作用于 DSH 设置对话框本身（含面板里的卡片 / 输入框），与「界面不透明度」「侧栏不透明度」互不影响。拖动时即时预览，松开保存。', en: 'Applies only to the DSH settings dialog itself (including the cards and inputs inside it), independent of "UI opacity" and "Sidebar opacity". Drag to preview live, release to save.' },
   useStaticDefault: { zh: '使用静态背景默认', en: 'Use static background default' },
   useDynamicExample: { zh: '使用动态背景示例', en: 'Use dynamic GIF example' },
   videoAudio: { zh: '视频背景声音', en: 'Background video audio' },
@@ -959,7 +964,38 @@ function syncBgVideo(cfg: XiaoConfig, active: boolean): void {
 }
 
 /**
- * 写入磨砂背景的「公共视觉层」：模糊强度、主色渐变、面板 / 侧栏不透明度变量，以及根框架的
+ * 写入「设置页不透明度」一族 CSS 变量。**只有 DSH 设置对话框的规则消费它们**（见 XIAO_CSS 里的
+ * `[data-shortcut-modal="settings"]` 一族），与界面 / 侧栏两族完全并列、互不引用。
+ *
+ * 取值：面板本体 = sl；面板内表面（卡片 / 输入框 / 悬浮层）比面板高 0.04–0.12 一档，保证层次感，
+ * 同时仍随滑杆**单调**变化（拖到 0 全透、拖到 1 全实）。每个变量都是当场算好的具体 rgba，
+ * 不存在「把自己置空又去 var() 它」的自我引用陷阱（右栏曾踩过）。
+ */
+function writeSettingsOpacityVars(
+  de: HTMLElement,
+  surfaces: { light: [number, number, number]; dark: [number, number, number] },
+  sl: number,
+): void {
+  const [lr, lg, lb] = surfaces.light;
+  const [dr, dg, db] = surfaces.dark;
+  const at = (delta: number): number => Math.min(sl + delta, 1);
+  de.style.setProperty('--xiao-settings-ovl', rgba(lr, lg, lb, sl));
+  de.style.setProperty('--xiao-settings-ovl-l1', rgba(lr, lg, lb, at(0.06)));
+  de.style.setProperty('--xiao-settings-ovl-l3', rgba(lr, lg, lb, at(0.04)));
+  de.style.setProperty('--xiao-settings-ovl-overlay', rgba(lr, lg, lb, at(0.12)));
+  de.style.setProperty('--xiao-settings-ovl-dark', rgba(dr, dg, db, sl));
+  de.style.setProperty('--xiao-settings-ovl-dark-l1', rgba(dr, dg, db, at(0.06)));
+  de.style.setProperty('--xiao-settings-ovl-dark-l3', rgba(dr, dg, db, at(0.04)));
+  de.style.setProperty('--xiao-settings-ovl-dark-overlay', rgba(dr, dg, db, at(0.12)));
+}
+
+/** 取合法的「设置页不透明度」（缺失 / 非法 / 非数回默认 0.4）。导出供单测直接验证。 */
+export function settingsOpacity(cfg: XiaoConfig): number {
+  return clampNum(cfg.settingsOpacity, CLIENT_RANGES.settingsOpacity.min, CLIENT_RANGES.settingsOpacity.max, CLIENT_DEFAULT_CONFIG.settingsOpacity);
+}
+
+/**
+ * 写入磨砂背景的「公共视觉层」：模糊强度、主色渐变、面板 / 侧栏 / 设置页不透明度变量，以及根框架的
  * inline 兜底（CSS 选择器未命中时仍能透出并模糊）。单张背景与多背景轮播共用，因此每次配置变更
  * 都会调用 —— 拖滑杆 / 切明暗主题即时生效。不含路径、<video> 与图层本身（那些各自负责）。
  */
@@ -1007,6 +1043,9 @@ function applyBackgroundChrome(cfg: XiaoConfig): void {
   de.style.setProperty('--xiao-panel-ovl-dark-l1', rgba(dr, dg, db, Math.max(so - 0.06, 0)));
   de.style.setProperty('--xiao-panel-ovl-dark-l2', rgba(dr, dg, db, Math.max(so - 0.02, 0)));
   de.style.setProperty('--xiao-panel-ovl-dark-l3', rgba(dr, dg, db, Math.max(so - 0.04, 0)));
+  // 设置页（DSH 设置对话框）独立不透明度：单独一套变量，只被 [data-shortcut-modal="settings"] 一族规则消费，
+  // 与上面的面板 / 侧栏两族互不引用 —— 调它不会再连带改界面或侧栏，反之亦然。
+  writeSettingsOpacityVars(de, surf, settingsOpacity(cfg));
   // JS 兜底：若 CSS 选择器未命中根框架，直接给它设 inline 半透明 + 模糊
   const frame = findFrameElement();
   if (frame) {
@@ -1052,6 +1091,14 @@ function syncBackgroundSingle(cfg: XiaoConfig): void {
     de.style.removeProperty('--xiao-panel-ovl-dark-l1');
     de.style.removeProperty('--xiao-panel-ovl-dark-l2');
     de.style.removeProperty('--xiao-panel-ovl-dark-l3');
+    de.style.removeProperty('--xiao-settings-ovl');
+    de.style.removeProperty('--xiao-settings-ovl-l1');
+    de.style.removeProperty('--xiao-settings-ovl-l3');
+    de.style.removeProperty('--xiao-settings-ovl-overlay');
+    de.style.removeProperty('--xiao-settings-ovl-dark');
+    de.style.removeProperty('--xiao-settings-ovl-dark-l1');
+    de.style.removeProperty('--xiao-settings-ovl-dark-l3');
+    de.style.removeProperty('--xiao-settings-ovl-dark-overlay');
     de.style.removeProperty('--xiao-theme-color');
     de.style.removeProperty('--xiao-grad-a');
     de.style.removeProperty('--xiao-grad-b');
@@ -1247,6 +1294,17 @@ function previewBgVolume(volume: number): void {
     if (vol <= 0) video.muted = true;
     else if (video.muted && hasUserActivation()) video.muted = false;
   });
+}
+
+/**
+ * 设置页不透明度滑杆拖动中的即时预览：直接重写 --xiao-settings-ovl 一族变量，不等配置写回。
+ * 用最近一次同步进来的配置（liveBgConfig）算浅深 RGB，因此跟随当前主题主色；本函数不碰配置。
+ * 只在背景开启时有效（CSS 规则都挂在 html.xiao-bg-on 下）。
+ */
+function previewSettingsOpacity(store: ConfigStore, value: number): void {
+  const cfg = liveBgConfig(store.getSnapshot());
+  const themeColor = typeof cfg.themeColor === 'string' && cfg.themeColor.length > 0 ? cfg.themeColor : DEFAULT_THEME_COLOR;
+  writeSettingsOpacityVars(document.documentElement, deriveSurfaces(themeColor), clamp01(value));
 }
 
 /** 停止轮播并移除全部图层（离开轮播模式 / 卸载 / 总开关关闭时调用）。 */
@@ -3253,6 +3311,21 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
           if (v !== cfg.sidebarOpacity) void saveConfig(store, { sidebarOpacity: v });
         },
       }),
+      // 设置页不透明度：只作用于 DSH 设置对话框本身（面板 + 面板内表面），与上面两根滑杆互不影响。
+      // 拖动时用 onPreview 直接改 CSS 变量即时预览，松开 / 失焦 / 键盘确认才写配置。
+      React.createElement(RangeRow, {
+        label: t('settingsOpacity'),
+        value: settingsOpacity(cfg),
+        min: CLIENT_RANGES.settingsOpacity.min,
+        max: CLIENT_RANGES.settingsOpacity.max,
+        step: 0.01,
+        format: (v) => Math.round(v * 100) + '%',
+        onPreview: (v) => previewSettingsOpacity(store, v),
+        onCommit: (v) => {
+          if (v !== settingsOpacity(cfg)) void saveConfig(store, { settingsOpacity: v });
+        },
+      }),
+      React.createElement('div', { className: 'xiao-settings-hint' }, t('settingsOpacityHint')),
       React.createElement(
         'div',
         { className: 'xiao-settings-row' },
@@ -3271,6 +3344,7 @@ function XiaoSettingsPage({ store }: { store: ConfigStore }): React.ReactElement
                 backgroundBlur: 22,
                 panelOpacity: 0.5,
                 sidebarOpacity: 0.85,
+                settingsOpacity: 0.4,
               }),
           },
           t('useStaticDefault'),
@@ -3334,6 +3408,19 @@ const XIAO_CSS: string[] = [
   // 把它在列上置为 transparent，消除「列 + 侧栏根」的双层叠加。detailsCol 是 0.1.5 之前的列名，留给老版本。
   'html.xiao-bg-on [class$="sidebarCol"],[class$="detailsCol"]{background:var(--xiao-sidebar-ovl)!important;--dsw-specific-sidebar-fill:transparent!important;}',
   'html.xiao-bg-on body[data-ds-dark-theme] [class$="sidebarCol"],body[data-ds-dark-theme] [class$="detailsCol"]{background:var(--xiao-sidebar-ovl-dark)!important;--dsw-specific-sidebar-fill:transparent!important;}',
+  // —— DSH 设置对话框（设置页）：**独立**不透明度（settingsOpacity / 设置页不透明度） ——
+  // 面板本体由 DSH 自己用 background:var(--dsw-alias-bg-layer-2) 画底（0.2.1-rc.5 的 .AnXs9G_panel，无 !important），
+  // 所以这里**不抢 background**，而是在面板元素自身上重写它消费的语义 token：元素级自定义属性优先于
+  // 从 :root 继承来的值（继承不参与级联，无需 !important），于是面板本体与面板内表面（卡片 / 输入框 /
+  // 悬浮层 / 文件预览）一起跟着「设置页不透明度」走，与界面 / 侧栏两族彻底解耦。
+  // ⚠️ 取值全部来自 applyBackgroundChrome 下发的 --xiao-settings-ovl*（具体 rgba，无自我引用）。
+  'html.xiao-bg-on [data-shortcut-modal="settings"]{--dsw-alias-bg-base:var(--xiao-settings-ovl);--dsw-alias-bg-layer-1:var(--xiao-settings-ovl-l1);--dsw-alias-bg-layer-2:var(--xiao-settings-ovl);--dsw-alias-bg-layer-3:var(--xiao-settings-ovl-l3);--dsw-alias-bg-overlay:var(--xiao-settings-ovl-overlay);--dsw-alias-bg-document-preview:var(--xiao-settings-ovl-l1);}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [data-shortcut-modal="settings"]{--dsw-alias-bg-base:var(--xiao-settings-ovl-dark);--dsw-alias-bg-layer-1:var(--xiao-settings-ovl-dark-l1);--dsw-alias-bg-layer-2:var(--xiao-settings-ovl-dark);--dsw-alias-bg-layer-3:var(--xiao-settings-ovl-dark-l3);--dsw-alias-bg-overlay:var(--xiao-settings-ovl-dark-overlay);--dsw-alias-bg-document-preview:var(--xiao-settings-ovl-dark-l1);}',
+  // 旧版 DSH（0.1.5-rc.3 / 0.1.7-rc.2 实测：`data-shortcut-modal` 还不存在）只能靠 role="dialog"+aria-modal="true" 认面板；
+  // 用 :has(>nav) 把它与图片灯箱（唯一另一处 aria-modal，直接子节点是 img / button）区分开。
+  // 单独成规则而不是并进上面一条选择器列表：万一某版本不认 :has()，只丢这两条旧版兜底，不会连带主命中一起失效。
+  'html.xiao-bg-on [role="dialog"][aria-modal="true"]:has(>nav){--dsw-alias-bg-base:var(--xiao-settings-ovl);--dsw-alias-bg-layer-1:var(--xiao-settings-ovl-l1);--dsw-alias-bg-layer-2:var(--xiao-settings-ovl);--dsw-alias-bg-layer-3:var(--xiao-settings-ovl-l3);--dsw-alias-bg-overlay:var(--xiao-settings-ovl-overlay);--dsw-alias-bg-document-preview:var(--xiao-settings-ovl-l1);}',
+  'html.xiao-bg-on body[data-ds-dark-theme] [role="dialog"][aria-modal="true"]:has(>nav){--dsw-alias-bg-base:var(--xiao-settings-ovl-dark);--dsw-alias-bg-layer-1:var(--xiao-settings-ovl-dark-l1);--dsw-alias-bg-layer-2:var(--xiao-settings-ovl-dark);--dsw-alias-bg-layer-3:var(--xiao-settings-ovl-dark-l3);--dsw-alias-bg-overlay:var(--xiao-settings-ovl-dark-overlay);--dsw-alias-bg-document-preview:var(--xiao-settings-ovl-dark-l1);}',
   // 右栏面板（DSH 原生 data-sidebar-right-panel；better-sidebar ≥0.19 的 tab 也注册在这里）：
   // 外框透明（消掉与框架/列的重叠），内部表面改用专门的一组值着色（--xiao-panel-ovl-l1/l2/l3，见 applyBackgroundChrome），
   // 这组值**不自我引用**（不再 var() 一个同时被置空的变量 —— 那样会让内部全透、滑杆失灵，踩过）。
@@ -3500,6 +3587,14 @@ function apply(ctx: ClientCtx): void {
       de.style.removeProperty('--xiao-bg-ovl-dark');
       de.style.removeProperty('--xiao-sidebar-ovl');
       de.style.removeProperty('--xiao-sidebar-ovl-dark');
+      de.style.removeProperty('--xiao-settings-ovl');
+      de.style.removeProperty('--xiao-settings-ovl-l1');
+      de.style.removeProperty('--xiao-settings-ovl-l3');
+      de.style.removeProperty('--xiao-settings-ovl-overlay');
+      de.style.removeProperty('--xiao-settings-ovl-dark');
+      de.style.removeProperty('--xiao-settings-ovl-dark-l1');
+      de.style.removeProperty('--xiao-settings-ovl-dark-l3');
+      de.style.removeProperty('--xiao-settings-ovl-dark-overlay');
       de.style.removeProperty('--xiao-theme-color');
       de.style.removeProperty('--xiao-grad-a');
       de.style.removeProperty('--xiao-grad-b');

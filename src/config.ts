@@ -75,6 +75,12 @@ export interface XiaoConfig {
    */
   sidebarOpacity: number;
   /**
+   * 设置页不透明度（0–1）：**只**作用于 DSH 设置对话框这一块，与 panelOpacity / sidebarOpacity
+   * 完全独立，允许到 1.0（完全 100% 不透明）。
+   * 默认 0.4 = 旧版在默认「界面不透明度 50%」下设置页的实际观感（升级后开箱即不变）。
+   */
+  settingsOpacity: number;
+  /**
    * 主题主色（hex，如 #2E8B72）：青玉/翠青整套色板（背景、边框、品牌色、侧栏、背景渐变）都从
    * 这个主色派生。默认魈的青玉绿；用户可经设置页圆形色盘任意自定义。
    */
